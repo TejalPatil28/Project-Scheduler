@@ -1,0 +1,52 @@
+# ── Sensitive data - NEVER UPLOAD ─────────────────────────────
+data/
+backend/users.xlsx
+
+# ── JSON data files ────────────────────────────────────────────
+*.json
+
+# ── All Excel/spreadsheet files ────────────────────────────────
+*.xlsx
+*.xlsb
+*.xls
+*.xlsm
+*.csv
+
+# ── Python ─────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+*.egg
+
+# ── OS files ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── Editor ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ── Logs ───────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Flask ──────────────────────────────────────────────────────
+instance/
+.env
+.flaskenv
