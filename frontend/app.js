@@ -869,15 +869,21 @@ async function loadSheetView() {
 }
 
 function renderExcelMirror(container, data) {
-  var cells      = data.cells;
-  var colWidths  = data.col_widths;
-  var rowHeights = data.row_heights;
-  var maxRow     = data.max_row;
-  var cols       = data.cols;
-  var colGroups   = data.col_groups || [];  // [{cols:[...], level:1}, ...]
+  var cells        = data.cells;
+  var colWidths    = data.col_widths;
+  var rowHeights   = data.row_heights;
+  var maxRow       = data.max_row;
+  var cols         = data.cols;
+  var colGroups    = data.col_groups || [];
   var editableFill = data.editable_fill || null;
-  console.log("[XL] col_groups from API:", JSON.stringify(colGroups));
-  console.log("[XL] editable_fill:", editableFill);
+  var infoRows     = data.info_rows    || [];
+  var headerRows   = data.header_rows  || [];
+  var banner       = data.project_banner || {};
+  var leftPanel    = data.left_panel   || {};
+  var infoRowSet   = {};
+  infoRows.forEach(function(r) { infoRowSet[r] = true; });
+  var headerRowSet = {};
+  headerRows.forEach(function(r) { headerRowSet[r] = true; });
 
   var AD_OPTIONS = ["Engineering","Purchase","Software","Project Management","Manufacturing","Sales","Client"];
 
@@ -938,7 +944,36 @@ function renderExcelMirror(container, data) {
 
   // Detect dark mode
   var isDark = document.documentElement.getAttribute("data-theme") !== "light";
-  var xlBg       = isDark ? "#1e1e1e" : "#ffffff";
+  var xlBg         = isDark ? "#1e1e1e" : "#ffffff";
+  var xlZebraOdd  = isDark ? "#1e1e1e" : "#ffffff";
+  var xlZebraEven = isDark ? "#242424" : "#f7f9fc";
+
+  // ── Render project info banner ────────────────────────────
+  var bBg       = isDark ? "#16213e" : "#2e5fa3";
+  var bBorder   = isDark ? "#2a3a6a" : "#1e3f7a";
+  var bLabel    = isDark ? "#7a9cc8" : "rgba(255,255,255,0.7)";
+  var bValue    = isDark ? "#e0eeff" : "#ffffff";
+  var bDivider  = isDark ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.25)";
+  var bFont     = "font-family:Calibri,Arial,sans-serif;";
+
+  function bannerField(label, value) {
+    if (!value) return "";
+    return '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 20px;border-right:1px solid ' + bDivider + ';min-width:100px;">' +
+      '<div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:' + bLabel + ';margin-bottom:3px;">' + label + '</div>' +
+      '<div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">' + h(value) + '</div>' +
+    '</div>';
+  }
+
+  var bannerHtml = '<div style="position:sticky;top:0;z-index:10;display:flex;align-items:stretch;height:56px;background:' + bBg + ';border-bottom:3px solid ' + bBorder + ';overflow:hidden;flex-shrink:0;">';
+  bannerHtml += '<div style="display:flex;align-items:center;padding:0 16px 0 14px;border-right:1px solid ' + bDivider + '">';
+  bannerHtml += '<div style="' + bFont + 'font-size:16px;font-weight:800;color:' + bValue + ';letter-spacing:-0.02em;">' + h(banner.or_number || "") + '</div>';
+  bannerHtml += '</div>';
+  bannerHtml += bannerField("Customer", banner.customer_name);
+  bannerHtml += bannerField("Section", banner.section);
+  bannerHtml += bannerField("Sales Engineer", banner.sales_engineer);
+  bannerHtml += bannerField("Sales Manager", banner.sales_manager);
+
+  bannerHtml += '</div>';
   var xlCellBg   = isDark ? "#1e1e1e" : "#ffffff";
   var xlHeaderBg = isDark ? "#2a2a2a" : "#f2f2f2";
   var xlCornerBg = isDark ? "#242424" : "#e8e8e8";
@@ -959,7 +994,43 @@ function renderExcelMirror(container, data) {
       "color:" + xlText,
     ].join(";");
 
-    var html = '<div style="overflow:auto;height:calc(115vh - var(--topbar-h) - 36px);position:relative;background:' + xlBg + '">';
+    // ── Build left panel HTML ────────────────────────────────
+    var lpBg      = isDark ? "#161616" : "#f0f4f8";
+    var lpBorder  = isDark ? "#2a2a2a" : "#d0d8e4";
+    var lpLabel   = isDark ? "#666666" : "#888888";
+    var lpValue   = isDark ? "#e0e0e0" : "#111111";
+    var lpSection = isDark ? "#333333" : "#d8e2ee";
+    var lpFont    = "font-family:Calibri,Arial,sans-serif;";
+
+    function lpRow(label, value) {
+      if (!label) return "";
+      return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:2px 10px;gap:8px;">' +
+        '<span style="' + lpFont + 'font-size:11px;font-weight:600;color:' + lpLabel + ';white-space:nowrap;">' + h(label) + '</span>' +
+        '<span style="' + lpFont + 'font-size:11px;font-weight:700;color:' + lpValue + ';text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;">' + h(value || "—") + '</span>' +
+      '</div>';
+    }
+
+    function lpSectionHeader(title) {
+      return '<div style="padding:4px 10px 2px;background:' + lpSection + ';font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:' + lpLabel + ';border-top:1px solid ' + lpBorder + ';border-bottom:1px solid ' + lpBorder + ';">' + title + '</div>';
+    }
+
+    var leftPanelHtml = '<div style="width:200px;flex-shrink:0;background:' + lpBg + ';border-right:1px solid ' + lpBorder + ';overflow-y:auto;font-size:10px;">';
+    // Project info
+    leftPanelHtml += lpSectionHeader("Project Info");
+    (leftPanel.project_info || []).forEach(function(item) { leftPanelHtml += lpRow(item.label, item.value); });
+    // Dates
+    leftPanelHtml += lpSectionHeader("Dates");
+    (leftPanel.dates || []).forEach(function(item) { leftPanelHtml += lpRow(item.label, item.value); });
+    // Stakeholders
+    leftPanelHtml += lpSectionHeader("Stakeholders");
+    (leftPanel.stakeholders || []).forEach(function(item) { leftPanelHtml += lpRow(item.label, item.value); });
+    leftPanelHtml += '</div>';
+
+    var html = '<div style="display:flex;flex-direction:column;height:calc(115vh - var(--topbar-h) - 36px);position:relative;background:' + xlBg + ';overflow:hidden;">';
+    html += '<div style="flex-shrink:0;overflow:hidden;">' + bannerHtml + '</div>';
+    html += '<div style="display:flex;flex:1;min-height:0;overflow:hidden;">';
+    html += leftPanelHtml;
+    html += '<div style="overflow:auto;flex:1;position:relative;">';
     html += '<table style="' + tableStyle + '">';
     html += '<thead>';
 
@@ -1022,14 +1093,21 @@ function renderExcelMirror(container, data) {
     var greenFill = isDark ? "#2d4a1e" : "#92D050";
 
     for (var r = 1; r <= maxRow; r++) {
+      // Skip info rows (1-5) — shown in banner instead
+      if (infoRowSet[r]) continue;
+
       var rh = rowHeights[String(r)] || 20;
-      var isComplete = false; // per-row flag used only for Z cell
+      var isComplete = false;
       var zCoord = "Z" + r;
       var zInfo  = cells[zCoord];
       if (zInfo) {
         var zVal = String(zInfo.v || "");
         isComplete = (zVal === "100%" || zVal === "100");
       }
+
+      var dataRowIndex = r - infoRows.length;
+      var isEvenDataRow = (dataRowIndex % 2 === 0);
+
       html += '<tr style="height:' + rh + 'px">';
       html += '<td style="position:sticky;left:0;z-index:3;background:' + xlCornerBg + ';color:' + xlRowNumColor + ';text-align:center;font-size:10px;border:1px solid ' + xlBorder + ';min-width:28px;width:28px;user-select:none">' + r + '</td>';
 
@@ -1100,7 +1178,7 @@ function renderExcelMirror(container, data) {
       }
       html += '</tr>';
     }
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div></div>';
     container.innerHTML = html;
   }
 

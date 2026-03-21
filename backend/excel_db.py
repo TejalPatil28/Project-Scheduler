@@ -730,7 +730,7 @@ def get_raw_sheet(filepath, max_col=30):
     ws = wb.active
     max_row = ws.max_row
     max_col = min(ws.max_column, max_col)
-    cols = [gcl(i) for i in range(1, max_col + 1)]
+    cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
 
     # ── Merged cells ──────────────────────────────────────────
     merged_map = {}
@@ -926,15 +926,78 @@ def get_raw_sheet(filepath, max_col=30):
                     cells[coord]["editable"] = True
                     cells[coord]["editable_col"] = col_letter
 
+    # Read project info from header rows for banner
+    def _v(ref):
+        v = ws[ref].value
+        return str(v).strip() if v else ""
+
+    # W2 may be empty — fall back to V9 (first task start date)
+    w2_val = _v("W2") or _v("V9")
+
+    def _date(ref):
+        v = ws[ref].value
+        if v is None: return ""
+        if isinstance(v, (datetime, date)):
+            d = v.date() if isinstance(v, datetime) else v
+            return d.strftime("%d-%b-%y")
+        return str(v).strip()
+
+    project_banner = {
+        "or_number":      _v("D1"),
+        "section":        _v("D7"),
+        "sales_engineer": _v("I2"),
+        "sales_manager":  _v("I3"),
+        "customer_name":  _v("D10"),
+        "start_date_lbl": _v("W1"),
+        "start_date_val": w2_val,
+        "days_swe_lbl":   _v("AB1"),
+        "days_swe_val":   _v("AB2"),
+    }
+
+    # Vertical left panel data
+    left_panel = {
+        "project_info": [
+            {"label": _v("C9")  or "PO Value",      "value": str(_v("D9") or "")},
+            {"label": _v("C10") or "Customer",      "value": _v("D10")},
+            {"label": _v("C11") or "End Customer",  "value": _v("D11")},
+            {"label": _v("C12") or "Consultant",    "value": _v("D12")},
+            {"label": _v("C13") or "Project Desc.", "value": _v("D13")},
+            {"label": _v("C14") or "Section",       "value": _v("D14")},
+            {"label": _v("C17") or "SW Efforts",    "value": str(_v("D17") or "")},
+        ],
+        "dates": [
+            {"label": _v("B28") or "Internal KOM",  "value": _date("C28")},
+            {"label": _v("B29") or "SW Input",      "value": _date("C29")},
+            {"label": _v("B30") or "SW FAT",        "value": _date("C30")},
+            {"label": _v("B31") or "Install",       "value": _date("C31")},
+            {"label": _v("B32") or "PreComm.",      "value": _date("C32")},
+            {"label": _v("B33") or "Comm.",         "value": _date("C33")},
+        ],
+        "stakeholders": [
+            {"label": _v("B36") or "Sales",  "value": _v("C36")},
+            {"label": _v("B37") or "PM",     "value": _v("C37")},
+            {"label": _v("B38") or "HW",     "value": _v("C38")},
+            {"label": _v("B41") or "SW",     "value": _v("C41")},
+            {"label": _v("B40") or "MFG",    "value": _v("C40")},
+            {"label": _v("B42") or "E&C",    "value": _v("C42")},
+            {"label": _v("B39") or "BYR",    "value": _v("C39")},
+            {"label": _v("B43") or "A/C",    "value": _v("C43")},
+        ],
+    }
+
     return {
-        "cells":         cells,
-        "col_widths":    col_widths,
-        "row_heights":   row_heights,
-        "max_row":       max_row,
-        "max_col":       max_col,
-        "cols":          cols,
-        "col_groups":    col_groups,
-        "editable_fill": editable_fill,
+        "cells":          cells,
+        "col_widths":     col_widths,
+        "row_heights":    row_heights,
+        "max_row":        max_row,
+        "max_col":        max_col,
+        "cols":           cols,
+        "col_groups":     col_groups,
+        "editable_fill":  editable_fill,
+        "project_banner": project_banner,
+        "info_rows":      list(range(1, 6)),    # rows 1-5: skip (shown in banner)
+        "header_rows":    [],                    # no sticky headers
+        "left_panel":     left_panel,
     }
 
 def delete_user(username):
