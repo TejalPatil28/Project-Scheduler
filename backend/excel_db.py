@@ -775,7 +775,7 @@ def get_raw_sheet(filepath, max_col=30):
             col_outline[col] = 0
 
     # ── Manual column width adjustments ──────────────────────
-    _col_overrides = {"B": 0.90, "C": 0.80, "D": 0.50, "I": 0.60, "V": 0.90, "W": 0.90}
+    _col_overrides = {"B": 0.90, "C": 0.80, "D": 0.35, "I": 0.60, "V": 0.90, "W": 0.90}
     for _col, _factor in _col_overrides.items():
         if _col in col_widths:
             col_widths[_col] = max(30, round(col_widths[_col] * _factor))
