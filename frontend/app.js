@@ -472,8 +472,8 @@ function renderMasterList(masterList, projects) {
     var isActive = dashState.activeMasterPid === pid;
     var proj     = projMap[m.file_id || pid];
 
-    // Exists badge: filled green dot = exists, dashed ring = missing
-    var existsBadge = '<span class="master-exists-badge ' + (exists ? "exists" : "missing") + '" title="' + (exists ? "File in database" : "File not in database") + '"></span>';
+    // Stale clock icon (right side, added after content div)
+    var staleIcon = stale ? '<span title="Not updated in last 2 days" style="font-size:11px;flex-shrink:0;margin-left:auto;padding-left:6px;">\u{1F550}</span>' : '';
 
     var customerName = proj ? h(proj.customer_name || "") : "";
     var pct = proj ? (proj.overall_percent || 0) : null;
@@ -486,15 +486,17 @@ function renderMasterList(masterList, projects) {
       + (stale    ? " stale"  : "")
       + (exists   ? ""        : " no-file");
 
+    var itemBg = !exists ? "background:rgba(244,63,94,0.28);border-color:rgba(244,63,94,0.5);" : "";
+
     var safeId   = h(pid);
     var safeFile = h(m.file_id || "");
-    html += '<div class="' + classes + '" data-pid="' + safeId + '" data-fid="' + safeFile + '" data-exists="' + exists + '" onclick="handleMasterClick(this)">'
-      + existsBadge
+    html += '<div class="' + classes + '" data-pid="' + safeId + '" data-fid="' + safeFile + '" data-exists="' + exists + '" onclick="handleMasterClick(this)" style="' + itemBg + '">'
       + '<div style="flex:1;min-width:0;">'
       +   '<div class="master-item-id">' + safeId + '</div>'
       +   (customerName ? '<div class="master-item-name">' + customerName + '</div>' : '')
       +   progressBar
       + '</div>'
+      + staleIcon
       + '</div>';
   });
 
@@ -965,8 +967,9 @@ function renderExcelMirror(container, data) {
       }).join("");
       input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\"><option value=\"\"></option>" + opts + "</select>";
     } else if (col === "AF") {
-      // Remarks - free text input
-      input = "<input type=\"text\" style=\"" + inputStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
+      // Remarks - free text input, use light text in dark mode since no Excel fill
+      var afStyle = inputStyle.replace("color:#000000", "color:" + (isDark ? "#e0e0e0" : "#000000"));
+      input = "<input type=\"text\" style=\"" + afStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
     }
     return input;
   }
@@ -1018,21 +1021,37 @@ function renderExcelMirror(container, data) {
     '</div>';
   }
 
-  var bannerHtml = '<div style="position:sticky;top:0;z-index:10;display:flex;align-items:stretch;height:56px;background:' + bBg + ';border-bottom:3px solid ' + bBorder + ';overflow:hidden;flex-shrink:0;">';
-  bannerHtml += '<div style="display:flex;align-items:center;padding:0 16px 0 14px;border-right:1px solid ' + bDivider + '">';
-  bannerHtml += '<div style="' + bFont + 'font-size:16px;font-weight:800;color:' + bValue + ';letter-spacing:-0.02em;">' + h(banner.or_number || "") + '</div>';
-  bannerHtml += '</div>';
-  bannerHtml += bannerField("Customer", banner.customer_name);
-  bannerHtml += bannerField("Section", banner.section);
-  bannerHtml += bannerField("Sales Engineer", banner.sales_engineer);
-  bannerHtml += bannerField("Sales Manager", banner.sales_manager);
-  if (banner.start_date_val) bannerHtml += bannerField(banner.start_date_lbl || "Start Date", banner.start_date_val);
-  if (banner.days_swe_val)   bannerHtml += bannerField(banner.days_swe_lbl   || "Days in SWE", banner.days_swe_val);
-  if (banner.ld_date_val)    bannerHtml += bannerField(banner.ld_date_lbl    || "LD Date",      banner.ld_date_val);
-  if (banner.ld_maxwk_val)   bannerHtml += bannerField(banner.ld_maxwk_lbl   || "LD Max/Wk",    banner.ld_maxwk_val);
-  if (banner.ld_maxov_val)   bannerHtml += bannerField(banner.ld_maxov_lbl   || "LD Max of OV", banner.ld_maxov_val);
-  if (banner.ld_remarks_val) bannerHtml += bannerField(banner.ld_remarks_lbl || "LD Remarks",   banner.ld_remarks_val);
+  var lpInfo         = leftPanel.project_info  || [];
+  var lpStakeholders = leftPanel.stakeholders  || [];
+  var lp_project_desc = (lpInfo[4]         || {}).value || "";
+  var lp_po_value     = (lpInfo[0]         || {}).value || "";
+  var lp_sw_efforts   = (lpInfo[6]         || {}).value || "";
+  var lp_pm           = (lpStakeholders[1] || {}).value || "";
+  var ldHasData = !!(banner.ld_date_val || banner.ld_maxwk_val || banner.ld_maxov_val || banner.ld_remarks_val);
 
+  var bannerHtml = '<div style="position:sticky;top:0;z-index:10;flex-shrink:0;">';
+  bannerHtml +=     '<div style="display:flex;align-items:stretch;height:64px;background:' + bBg + ';border-bottom:3px solid ' + bBorder + ';overflow:visible;position:relative;">';
+  bannerHtml +=       '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 16px 0 14px;border-right:1px solid ' + bDivider + ';flex-shrink:0;">';
+  bannerHtml +=         '<div style="' + bFont + 'font-size:16px;font-weight:800;color:' + bValue + ';letter-spacing:-0.02em;white-space:nowrap;">' + h(banner.or_number || "") + '</div>';
+  bannerHtml +=         '<div style="' + bFont + 'font-size:11px;font-weight:500;color:' + bLabel + ';margin-top:3px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + h(lp_project_desc) + '">' + h(lp_project_desc) + '</div>';
+  bannerHtml +=       '</div>';
+  bannerHtml +=       '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 20px;border-right:1px solid ' + bDivider + ';flex-shrink:0;gap:6px;">';
+  bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">Sales Engineer</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.sales_engineer || "") + '</div></div>';
+  bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">PM</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(lp_pm) + '</div></div>';
+  bannerHtml +=       '</div>';
+  bannerHtml +=       '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 20px;border-right:1px solid ' + bDivider + ';flex-shrink:0;gap:6px;">';
+  bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">PO Value</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(lp_po_value) + '</div></div>';
+  bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">SW Efforts</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(lp_sw_efforts) + '</div></div>';
+  bannerHtml +=       '</div>';
+  if (ldHasData) {
+    bannerHtml +=     '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 20px;flex-shrink:0;gap:6px;margin-left:auto;border-left:1px solid ' + bDivider + ';">';
+    if (banner.ld_date_val)    bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_date_lbl||"LD Date") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_date_val) + '</div></div>';
+    if (banner.ld_maxwk_val)   bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_maxwk_lbl||"LD Max/Wk") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_maxwk_val) + '</div></div>';
+    if (banner.ld_maxov_val)   bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_maxov_lbl||"LD Max/OV") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_maxov_val) + '</div></div>';
+    if (banner.ld_remarks_val) bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_remarks_lbl||"LD Remarks") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_remarks_val) + '</div></div>';
+    bannerHtml +=     '</div>';
+  }
+  bannerHtml +=   '</div>';
   bannerHtml += '</div>';
   var xlCellBg   = isDark ? "#1e1e1e" : "#ffffff";
   var xlHeaderBg = isDark ? "#2a2a2a" : "#f2f2f2";
@@ -1066,7 +1085,7 @@ function renderExcelMirror(container, data) {
       if (!label) return "";
       return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:2px 10px;gap:8px;">' +
         '<span style="' + lpFont + 'font-size:11px;font-weight:600;color:' + lpLabel + ';white-space:nowrap;">' + h(label) + '</span>' +
-        '<span style="' + lpFont + 'font-size:11px;font-weight:700;color:' + lpValue + ';text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;">' + h(value || "—") + '</span>' +
+        '<span title="' + h(value || "") + '" style="' + lpFont + 'font-size:11px;font-weight:700;color:' + lpValue + ';text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;cursor:default;">' + h(value || "—") + '</span>' +
       '</div>';
     }
 
@@ -1074,17 +1093,67 @@ function renderExcelMirror(container, data) {
       return '<div style="padding:4px 10px 2px;background:' + lpSection + ';font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:' + lpLabel + ';border-top:1px solid ' + lpBorder + ';border-bottom:1px solid ' + lpBorder + ';">' + title + '</div>';
     }
 
-    var leftPanelHtml = '<div style="width:200px;flex-shrink:0;background:' + lpBg + ';border-right:1px solid ' + lpBorder + ';overflow-y:auto;font-size:10px;">';
-    // Project info
+    var lpId = "lp-" + Date.now();
+    var leftPanelHtml = '<div id="' + lpId + '" style="width:200px;min-width:200px;flex-shrink:0;background:' + lpBg + ';border-right:1px solid ' + lpBorder + ';display:flex;flex-direction:column;overflow:hidden;transition:width 0.2s,min-width 0.2s;position:relative;">';
+    leftPanelHtml += '<button id="' + lpId + '-btn" title="Toggle panel" onclick="(function(){'
+      + 'var p=document.getElementById(\'' + lpId + '\');'
+      + 'var inner=document.getElementById(\'' + lpId + '-inner\');'
+      + 'var btn=document.getElementById(\'' + lpId + '-btn\');'
+      + 'var isCollapsed=p.getAttribute(\'data-collapsed\')==\'1\';'
+      + 'if(isCollapsed){'
+      +   'p.style.width=\'200px\';p.style.minWidth=\'200px\';'
+      +   'inner.style.display=\'block\';'
+      +   'btn.innerHTML=\'&#8249;\';'
+      +   'btn.style.cssText=\'position:absolute;top:4px;right:4px;z-index:6;width:18px;height:18px;border-radius:3px;background:' + lpSection + ';border:1px solid ' + lpBorder + ';cursor:pointer;color:' + lpLabel + ';font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;\';'
+      +   'p.setAttribute(\'data-collapsed\',\'0\');'
+      + '}else{'
+      +   'p.style.width=\'24px\';p.style.minWidth=\'24px\';'
+      +   'inner.style.display=\'none\';'
+      +   'btn.innerHTML=\'&#8250;\';'
+      +   'btn.style.cssText=\'position:absolute;top:4px;left:3px;z-index:6;width:18px;height:18px;border-radius:3px;background:' + lpSection + ';border:1px solid ' + lpBorder + ';cursor:pointer;color:' + lpLabel + ';font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;\';'
+      +   'p.setAttribute(\'data-collapsed\',\'1\');'
+      + '}'
+      + '})()" style="position:absolute;top:4px;right:4px;z-index:6;width:18px;height:18px;border-radius:3px;background:' + lpSection + ';border:1px solid ' + lpBorder + ';cursor:pointer;color:' + lpLabel + ';font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;">&#8249;</button>';
+    leftPanelHtml += '<div id="' + lpId + '-inner" style="overflow-y:auto;flex:1;padding-top:26px;">';
+    // Project info — hide 0 (PO Value), 1 (Customer), 4 (Project Desc), 6 (SW Efforts) — shown in banner
     leftPanelHtml += lpSectionHeader("Project Info");
-    (leftPanel.project_info || []).forEach(function(item) { leftPanelHtml += lpRow(item.label, item.value); });
-    // Dates
+    var removedPI = new Set([0, 1, 4, 6]);
+    (leftPanel.project_info || []).forEach(function(item, idx) {
+      if (removedPI.has(idx)) return;
+      leftPanelHtml += lpRow(item.label, item.value);
+    });
+    // Dates — two column table (PM | SWE) with Excel cell colors
     leftPanelHtml += lpSectionHeader("Dates");
-    (leftPanel.dates || []).forEach(function(item) { leftPanelHtml += lpRow(item.label, item.value); });
-    // Stakeholders
+    leftPanelHtml += '<table style="width:100%;border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10px;">'
+      + '<thead><tr>'
+      + '<th style="padding:2px 6px;color:' + lpLabel + ';font-weight:700;text-align:left;border-bottom:1px solid ' + lpBorder + ';"></th>'
+      + '<th style="padding:2px 4px;color:' + lpLabel + ';font-weight:700;text-align:center;border-bottom:1px solid ' + lpBorder + ';font-size:9px;">PM</th>'
+      + '<th style="padding:2px 4px;color:' + lpLabel + ';font-weight:700;text-align:center;border-bottom:1px solid ' + lpBorder + ';font-size:9px;">SWE</th>'
+      + '</tr></thead><tbody>';
+    (leftPanel.dates || []).forEach(function(item) {
+      var pmBg  = (item.pm_fill  && item.pm_fill  !== "#FFFFFF") ? item.pm_fill  : "transparent";
+      var swBg  = (item.swe_fill && item.swe_fill !== "#FFFFFF") ? item.swe_fill : "transparent";
+      var pmFg  = item.pm_font  || lpValue;
+      var swFg  = item.swe_font || lpValue;
+      var pmVal  = item.pm  || item.value || "—";
+      var sweVal = item.swe || "—";
+      leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
+        + '<td style="padding:2px 6px;color:' + lpLabel + ';font-weight:600;white-space:nowrap;">' + h(item.label) + '</td>'
+        + '<td style="padding:2px 3px;text-align:center;background:' + pmBg + ';color:' + pmFg + ';font-weight:700;white-space:nowrap;" title="' + h(pmVal) + '">' + h(pmVal) + '</td>'
+        + '<td style="padding:2px 3px;text-align:center;background:' + swBg + ';color:' + swFg + ';font-weight:700;white-space:nowrap;" title="' + h(sweVal) + '">' + h(sweVal) + '</td>'
+        + '</tr>';
+    });
+    leftPanelHtml += '</tbody></table>';
+    // Stakeholders — hide Sales (idx 0), PM (idx 1), and logged-in user's own row
+    var userShort = ((state.user && state.user.short_name) || "").toUpperCase();
     leftPanelHtml += lpSectionHeader("Stakeholders");
-    (leftPanel.stakeholders || []).forEach(function(item) { leftPanelHtml += lpRow(item.label, item.value); });
-    leftPanelHtml += '</div>';
+    (leftPanel.stakeholders || []).forEach(function(item, idx) {
+      if (idx === 0 || idx === 1) return;
+      if (userShort && (item.value || "").toUpperCase() === userShort) return;
+      leftPanelHtml += lpRow(item.label, item.value);
+    });
+    leftPanelHtml += '</div>'; // end inner
+    leftPanelHtml += '</div>'; // end panel
 
     var html = '<div style="display:flex;flex-direction:column;height:calc(115vh - var(--topbar-h) - 36px);position:relative;background:' + xlBg + ';overflow:hidden;">';
     html += '<div style="flex-shrink:0;overflow:hidden;">' + bannerHtml + '</div>';

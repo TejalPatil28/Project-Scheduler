@@ -148,13 +148,19 @@ def _write_sheet_cache(project_id, data, sched_cache=None):
         print(f"Sheet cache write failed for {project_id}: {e}")
 
 def _read_sheet_cache(project_id, sched_cache=None):
-    """Read sheet data from JSON sidecar. Returns None if not found."""
-    cache_path = _sheet_cache_path(project_id)
+    """Read sheet data from JSON sidecar. Auto-invalidates if date format is stale."""
+    cache_path = _sheet_cache_path(project_id, sched_cache)
     if not os.path.exists(cache_path):
         return None
     try:
         with open(cache_path, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+        # Invalidate if dates still use old single-value format (missing "pm" key)
+        dates = data.get("left_panel", {}).get("dates", [])
+        if dates and "pm" not in dates[0]:
+            os.remove(cache_path)
+            return None
+        return data
     except Exception:
         return None
 
@@ -1105,12 +1111,12 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             {"label": _v("C17") or "SW Efforts",    "value": str(_v("D17") or "")},
         ],
         "dates": [
-            {"label": _v("B28") or "Internal KOM",  "value": _date("C28")},
-            {"label": _v("B29") or "SW Input",      "value": _date("C29")},
-            {"label": _v("B30") or "SW FAT",        "value": _date("C30")},
-            {"label": _v("B31") or "Install",       "value": _date("C31")},
-            {"label": _v("B32") or "PreComm.",      "value": _date("C32")},
-            {"label": _v("B33") or "Comm.",         "value": _date("C33")},
+            {"label": _v("B28") or "B28", "pm": _date("C28"), "swe": _date("D28"), "pm_fill": _resolve_color(ws["C28"].fill.fgColor) if ws["C28"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C28"].font.color), "swe_fill": _resolve_color(ws["D28"].fill.fgColor) if ws["D28"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D28"].font.color)},
+            {"label": _v("B29") or "B29", "pm": _date("C29"), "swe": _date("D29"), "pm_fill": _resolve_color(ws["C29"].fill.fgColor) if ws["C29"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C29"].font.color), "swe_fill": _resolve_color(ws["D29"].fill.fgColor) if ws["D29"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D29"].font.color)},
+            {"label": _v("B30") or "B30", "pm": _date("C30"), "swe": _date("D30"), "pm_fill": _resolve_color(ws["C30"].fill.fgColor) if ws["C30"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C30"].font.color), "swe_fill": _resolve_color(ws["D30"].fill.fgColor) if ws["D30"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D30"].font.color)},
+            {"label": _v("B31") or "B31", "pm": _date("C31"), "swe": _date("D31"), "pm_fill": _resolve_color(ws["C31"].fill.fgColor) if ws["C31"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C31"].font.color), "swe_fill": _resolve_color(ws["D31"].fill.fgColor) if ws["D31"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D31"].font.color)},
+            {"label": _v("B32") or "B32", "pm": _date("C32"), "swe": _date("D32"), "pm_fill": _resolve_color(ws["C32"].fill.fgColor) if ws["C32"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C32"].font.color), "swe_fill": _resolve_color(ws["D32"].fill.fgColor) if ws["D32"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D32"].font.color)},
+            {"label": _v("B33") or "B33", "pm": _date("C33"), "swe": _date("D33"), "pm_fill": _resolve_color(ws["C33"].fill.fgColor) if ws["C33"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C33"].font.color), "swe_fill": _resolve_color(ws["D33"].fill.fgColor) if ws["D33"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D33"].font.color)},
         ],
         "stakeholders": [
             {"label": _v("B36") or "Sales",  "value": _v("C36")},
