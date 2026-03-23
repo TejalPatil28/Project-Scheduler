@@ -6,6 +6,7 @@ var state = {
   pendingChanges: {},
   activePhase: "ALL",
   theme: localStorage.getItem("theme") || "dark",
+  sheetCache: {},  // project_id -> sheet data, client-side cache
 };
 
 function applyTheme(t) {
@@ -194,8 +195,9 @@ function renderShell() {
           '<div class="topbar-divider"></div>',
           '<div id="topbar-back-slot"></div>',
           '<div class="topbar-nav">',
-            '<button class="topbar-nav-btn active" id="nav-btn-projects" onclick="switchToProjects()">Projects</button>',
-            '<button class="topbar-nav-btn" id="nav-btn-dashboard" onclick="switchToDashboard()">Dashboard</button>',
+            '<button class="topbar-nav-btn active" id="nav-btn-dashboard" onclick="switchToDashboard()">Dashboard</button>',
+            '<button class="topbar-nav-btn" id="nav-btn-monitor" onclick="switchToMonitor()">Monitor</button>',
+            '<button class="topbar-nav-btn" id="nav-btn-projects" onclick="switchToProjects()">Projects</button>',
           '</div>',
           '<div class="page-title hidden" id="topbar-title"></div>',
         '</div>',
@@ -277,6 +279,11 @@ function handleThemeToggle(e) {
   if (toggle) toggle.classList.toggle("on", newTheme === "light");
   if (icon)   icon.textContent  = newTheme === "dark" ? "\u{1F319}" : "\u2600\uFE0F";
   if (label)  label.textContent = newTheme === "dark" ? "Dark Mode" : "Light Mode";
+  // Re-render sheet if open so colors update immediately
+  var xlGrid = document.getElementById("xl-grid");
+  if (xlGrid && state.project) {
+    renderXLGrid();
+  }
 }
 
 function setNav(active) {
@@ -347,13 +354,42 @@ async function renderDashboard() {
   window._dashProjects = projects;
   window._masterList   = masterList;
 
-  // Default to Projects view (empty main area)
-  switchToProjects();
+  // Default to Dashboard view
+  switchToDashboard();
+}
+
+async function switchToMonitor() {
+  setNavBtn("monitor");
+  setTopbar(null, false);
+  var sidebar = document.getElementById("master-sidebar");
+  if (sidebar) sidebar.style.display = "none";
+  var pg = document.getElementById("page-content");
+  if (pg) pg.classList.add("no-pad");
+  var page = document.getElementById("page-content");
+  page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading monitor...</div>';
+  try {
+    var data = await API.req("GET", "/monitor/sheet");
+    if (!data || data.error) {
+      page.innerHTML = '<div class="empty" style="padding-top:80px"><div class="empty-icon">&#9906;</div><div class="empty-text">No monitoring file found for your account.</div></div>';
+      return;
+    }
+    var wrap = document.createElement("div");
+    wrap.id = "xl-grid";
+    wrap.style.flex = "1";
+    wrap.style.minHeight = "0";
+    page.innerHTML = "";
+    page.appendChild(wrap);
+    renderExcelMirror(wrap, data);
+  } catch(err) {
+    page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
+  }
 }
 
 function switchToProjects() {
   setNavBtn("projects");
   setTopbar(null, false);
+  var sidebar = document.getElementById("master-sidebar");
+  if (sidebar) sidebar.style.display = "";
   var page = document.getElementById("page-content");
   page.innerHTML = '<div class="projects-empty-state"><div class="projects-empty-icon">&#9672;</div><div class="projects-empty-text">Select a project from the sidebar</div></div>';
 }
@@ -361,6 +397,8 @@ function switchToProjects() {
 function switchToDashboard() {
   setNavBtn("dashboard");
   setTopbar(null, false);
+  var sidebar = document.getElementById("master-sidebar");
+  if (sidebar) sidebar.style.display = "none";
   var projects = window._dashProjects || [];
   var page = document.getElementById("page-content");
   page.innerHTML = renderDashboardGridHTML(projects);
@@ -369,7 +407,7 @@ function switchToDashboard() {
 }
 
 function setNavBtn(active) {
-  ["projects", "dashboard"].forEach(function(id) {
+  ["dashboard", "monitor", "projects"].forEach(function(id) {
     var btn = document.getElementById("nav-btn-" + id);
     if (btn) btn.classList.toggle("active", id === active);
   });
@@ -451,12 +489,12 @@ function renderMasterList(masterList, projects) {
     var safeId   = h(pid);
     var safeFile = h(m.file_id || "");
     html += '<div class="' + classes + '" data-pid="' + safeId + '" data-fid="' + safeFile + '" data-exists="' + exists + '" onclick="handleMasterClick(this)">'
-      + '<div class="master-item-top">'
-      +   '<span class="master-item-id">' + safeId + '</span>'
-      +   existsBadge
+      + existsBadge
+      + '<div style="flex:1;min-width:0;">'
+      +   '<div class="master-item-id">' + safeId + '</div>'
+      +   (customerName ? '<div class="master-item-name">' + customerName + '</div>' : '')
+      +   progressBar
       + '</div>'
-      + (customerName ? '<div class="master-item-name">' + customerName + '</div>' : '')
-      + progressBar
       + '</div>';
   });
 
@@ -577,6 +615,8 @@ function renderProjectCards(list) {
 
 // ── PROJECT DETAIL ────────────────────────────────────────────
 async function openProject(projectId) {
+  var sidebar = document.getElementById("master-sidebar");
+  if (sidebar) sidebar.style.display = "";
   var pg = document.getElementById("page-content");
   if (pg) pg.classList.add("no-pad");
   state.pendingChanges = {};
@@ -860,8 +900,15 @@ function renderXLGrid() {
 async function loadSheetView() {
   var wrap = document.getElementById("xl-grid");
   if (!wrap || !state.project) return;
+  var pid = state.project.id;
   try {
-    var data = await API.req("GET", "/projects/" + state.project.id + "/sheet");
+    // Use client-side cache if available — instant re-open
+    if (state.sheetCache[pid]) {
+      renderExcelMirror(wrap, state.sheetCache[pid]);
+      return;
+    }
+    var data = await API.req("GET", "/projects/" + pid + "/sheet");
+    state.sheetCache[pid] = data;  // cache in browser
     renderExcelMirror(wrap, data);
   } catch(err) {
     wrap.innerHTML = '<div style="padding:20px;color:var(--text3)">Could not load sheet: ' + h(err.message||"error") + '</div>';
@@ -892,7 +939,8 @@ function renderExcelMirror(container, data) {
 
   function renderInputCell(info, coord, col, tdStyle) {
     var curVal = _editPending[coord] !== undefined ? _editPending[coord] : (info.v || "");
-    var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;";
+    var inputTextColor = "#000000";  // always black - inputs have light Excel fill background
+    var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;color:" + inputTextColor + ";";
     var input = "";
 
     if (col === "X" || col === "Y") {
@@ -916,6 +964,9 @@ function renderExcelMirror(container, data) {
         return "<option value=\"" + o + "\"" + (o === curVal ? " selected" : "") + ">" + o + "</option>";
       }).join("");
       input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\"><option value=\"\"></option>" + opts + "</select>";
+    } else if (col === "AF") {
+      // Remarks - free text input
+      input = "<input type=\"text\" style=\"" + inputStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
     }
     return input;
   }
@@ -933,7 +984,10 @@ function renderExcelMirror(container, data) {
   function isCollapsedCol(col) {
     var gi = colToGroup[col];
     if (gi === undefined || gi < 0) return false;
-    return collapseState[gi];
+    if (!collapseState[gi]) return false;
+    // When collapsed, hide all cols EXCEPT the last one (which shows as placeholder)
+    var lastCol = colGroups[gi].cols[colGroups[gi].cols.length - 1];
+    return col !== lastCol;
   }
 
   function borderStyle(weight) {
@@ -972,6 +1026,12 @@ function renderExcelMirror(container, data) {
   bannerHtml += bannerField("Section", banner.section);
   bannerHtml += bannerField("Sales Engineer", banner.sales_engineer);
   bannerHtml += bannerField("Sales Manager", banner.sales_manager);
+  if (banner.start_date_val) bannerHtml += bannerField(banner.start_date_lbl || "Start Date", banner.start_date_val);
+  if (banner.days_swe_val)   bannerHtml += bannerField(banner.days_swe_lbl   || "Days in SWE", banner.days_swe_val);
+  if (banner.ld_date_val)    bannerHtml += bannerField(banner.ld_date_lbl    || "LD Date",      banner.ld_date_val);
+  if (banner.ld_maxwk_val)   bannerHtml += bannerField(banner.ld_maxwk_lbl   || "LD Max/Wk",    banner.ld_maxwk_val);
+  if (banner.ld_maxov_val)   bannerHtml += bannerField(banner.ld_maxov_lbl   || "LD Max of OV", banner.ld_maxov_val);
+  if (banner.ld_remarks_val) bannerHtml += bannerField(banner.ld_remarks_lbl || "LD Remarks",   banner.ld_remarks_val);
 
   bannerHtml += '</div>';
   var xlCellBg   = isDark ? "#1e1e1e" : "#ffffff";
@@ -1045,25 +1105,28 @@ function renderExcelMirror(container, data) {
         var gi  = colToGroup[col];
 
         if (gi !== undefined && gi >= 0 && cols[ci] === colGroups[gi].cols[0]) {
-          // First col of group — put button here, skip all group cols in loop
           var group     = colGroups[gi];
           var collapsed = collapseState[gi];
-          var firstW    = colWidths[group.cols[0]] || 64;
           var btnLabel  = collapsed ? "+" : "\u2212";
           var btnBg     = collapsed ? "#d4edda" : "#fff3cd";
           var btnStyle  = "cursor:pointer;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;border:1px solid #999;background:" + btnBg + ";color:#333;line-height:1.4;";
-          // Button cell sits only above first col
-          html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';text-align:center;width:' + firstW + 'px;min-width:' + firstW + 'px">';
-          html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button>';
-          html += '</th>';
+
           if (!collapsed) {
-            // Expanded — render empty header cells for remaining group cols
+            // Expanded: button above first col, empty cells for rest
+            var firstW = colWidths[group.cols[0]] || 64;
+            html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';text-align:center;width:' + firstW + 'px;min-width:' + firstW + 'px">';
+            html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button></th>';
             for (var gci = 1; gci < group.cols.length; gci++) {
               var gcw = colWidths[group.cols[gci]] || 64;
               html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';width:' + gcw + 'px;min-width:' + gcw + 'px"></th>';
             }
+          } else {
+            // Collapsed: show only last col with button above it
+            var lastCol = group.cols[group.cols.length - 1];
+            var lastW   = colWidths[lastCol] || 64;
+            html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';text-align:center;width:' + lastW + 'px;min-width:' + lastW + 'px">';
+            html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button></th>';
           }
-          // collapsed — no extra cells, all group cols hidden
           ci += group.cols.length;
         } else {
           var cw = colWidths[col] || 64;
@@ -1090,7 +1153,7 @@ function renderExcelMirror(container, data) {
     // ── TBODY ──
     html += '<tbody>';
     // Green color for Z cell when 100% complete (from Excel CF rule $Z9>=100%)
-    var greenFill = isDark ? "#2d4a1e" : "#92D050";
+    var greenFill = isDark ? "#4a7a30" : "#92D050";
 
     for (var r = 1; r <= maxRow; r++) {
       // Skip info rows (1-5) — shown in banner instead
@@ -1108,7 +1171,8 @@ function renderExcelMirror(container, data) {
       var dataRowIndex = r - infoRows.length;
       var isEvenDataRow = (dataRowIndex % 2 === 0);
 
-      html += '<tr style="height:' + rh + 'px">';
+      var rowBg = isEvenDataRow ? xlZebraEven : xlZebraOdd;
+      html += '<tr style="height:' + rh + 'px;background:' + rowBg + '">';
       html += '<td style="position:sticky;left:0;z-index:3;background:' + xlCornerBg + ';color:' + xlRowNumColor + ';text-align:center;font-size:10px;border:1px solid ' + xlBorder + ';min-width:28px;width:28px;user-select:none">' + r + '</td>';
 
       for (var ci3 = 0; ci3 < cols.length; ci3++) {
@@ -1136,6 +1200,7 @@ function renderExcelMirror(container, data) {
 
         if (info) {
           if (info.fill) tdStyle.push("background-color:" + info.fill);
+          else tdStyle.push("background-color:" + rowBg);
           // Z cell: override with green if 100% complete
           if (col3 === "Z" && isComplete) tdStyle.push("background-color:" + greenFill);
           if (info.font) {
@@ -1193,7 +1258,7 @@ function renderExcelMirror(container, data) {
     var row = parseInt(coord.replace(/[A-Z]+/, ""), 10);
 
     // Map col to task field
-    var fieldMap = { "X": "actual_start", "Y": "actual_end", "Z": "percent_complete", "AD": "help_required" };
+    var fieldMap = { "X": "actual_start", "Y": "actual_end", "Z": "percent_complete", "AD": "help_required", "AF": "remark" };
     var field = fieldMap[col];
     if (!field) return;
 
@@ -1355,6 +1420,8 @@ async function saveChanges() {
     updateSaveBar();
     var total = taskUpdates.length + rowUpdates.length;
     toast("Saved " + total + " change" + (total > 1 ? "s" : "") + " \u2713");
+    // Invalidate client cache so re-render fetches fresh data
+    if (state.project) delete state.sheetCache[state.project.id];
     renderXLGrid();
   } catch(err) {
     toast(err.message || "Save failed", "error");
