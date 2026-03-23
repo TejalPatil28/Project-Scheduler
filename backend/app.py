@@ -12,14 +12,15 @@ from excel_db import (
     create_user,
     update_user,
     delete_user,
-    build_index,
-    read_index,
     update_index_entry,
     get_master_projects,
     OWNER_MAP,
 )
 
 app = Flask(__name__, static_folder=None)
+
+# In-memory sheet cache (JSON sidecar handles persistence across restarts)
+_sheet_cache = {}
 app.secret_key = "scheduler_excel_secret_2024"
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -27,14 +28,8 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 CORS(app, supports_credentials=True)
 
 # Simple in-memory sheet cache
-_sheet_cache = {}
-
 # ── Startup: build index ───────────────────────────────────────
-print("Loading project index...")
-try:
-    read_index()  # reads existing index.json, only builds if missing
-except Exception as e:
-    print(f"Index load failed: {e}")
+
 
 
 
@@ -107,28 +102,24 @@ def me():
 @login_required
 def list_projects():
     user = get_current_user()
-    projects = get_projects_for_user(user)
+    projects = get_projects_for_user(user)  # role-aware internally
     return jsonify(projects)
 
 @app.route("/api/projects/<project_id>", methods=["GET"])
 @login_required
 def get_project(project_id):
     user = get_current_user()
-    project = get_project_by_id(project_id)
+    project = get_project_by_id(project_id, role=user["role"])
     if not project:
         return jsonify({"error": "Project not found"}), 404
 
-    # Access check using short_name to match Excel initials
-    role  = user["role"]
-    short = user.get("short_name", "").upper()
+    # Access check — if project is in user's monitoring file they have access
+    role = user["role"]
     if role not in ("admin", "head"):
-        if role == "pm"     and project.get("pm_name",     "").strip().upper() != short:
-            return jsonify({"error": "Access denied"}), 403
-        if role == "hw_tl"  and project.get("hw_tl_name",  "").strip().upper() != short:
-            return jsonify({"error": "Access denied"}), 403
-        if role == "sw_tl"  and project.get("sw_tl_name",  "").strip().upper() != short:
-            return jsonify({"error": "Access denied"}), 403
-        if role == "mfg_tl" and project.get("mfg_tl_name", "").strip().upper() != short:
+        from excel_db import get_master_projects
+        master_list = get_master_projects(user["username"])
+        allowed_ids = {m.get("file_id") for m in master_list}
+        if project_id not in allowed_ids:
             return jsonify({"error": "Access denied"}), 403
 
     return jsonify(project)
@@ -140,8 +131,8 @@ def get_project(project_id):
 def get_project_tasks(project_id):
     user = get_current_user()
     role = user["role"]
-    owner_filter = OWNER_MAP.get(role)  # None = see all
-    tasks = get_tasks(project_id, owner_filter=owner_filter)
+    owner_filter = OWNER_MAP.get(role)
+    tasks = get_tasks(project_id, owner_filter=owner_filter, role=role)
     return jsonify(tasks)
 
 
@@ -156,7 +147,7 @@ def save_tasks(project_id):
         return jsonify({"error": "Expected list of task updates"}), 400
 
     # Verify each task's owner matches user role (unless admin/head/pm)
-    # Row-based updates (from sheet inputs, have _row key) bypass this check
+    # Row-based updates (from sheet input cells, have _row key) bypass this check
     if role not in ("admin", "head", "pm"):
         allowed_owner = OWNER_MAP.get(role)
         for item in data:
@@ -165,10 +156,10 @@ def save_tasks(project_id):
             if item.get("owner") != allowed_owner:
                 return jsonify({"error": f"You can only update {allowed_owner} tasks"}), 403
 
-    ok, msg = update_tasks_bulk(project_id, data)
+    ok, msg = update_tasks_bulk(project_id, data, role=role)
     if not ok:
         return jsonify({"error": msg}), 404
-    _sheet_cache.pop(project_id, None)  # clear cache so next open is fresh
+    _sheet_cache.pop(project_id, None)  # clear so next open is fresh
     return jsonify({"message": msg})
 
 @app.route("/api/projects/<project_id>/sheet", methods=["GET"])
@@ -177,11 +168,11 @@ def get_sheet_data(project_id):
     """Return raw cell data for the Excel-mirror UI. Cached in memory."""
     from excel_db import get_raw_sheet, PROJECTS_DIR
     # Check cache first
+    # Check in-memory cache first (fastest)
     if project_id in _sheet_cache:
         return jsonify(_sheet_cache[project_id])
     fpath = os.path.join(PROJECTS_DIR, project_id + ".xlsx")
     if not os.path.exists(fpath):
-        # Try .xlsb extension
         fpath_b = os.path.join(PROJECTS_DIR, project_id + ".xlsb")
         if os.path.exists(fpath_b):
             fpath = fpath_b
@@ -189,7 +180,7 @@ def get_sheet_data(project_id):
             return jsonify({"error": "Project file not found"}), 404
     try:
         data = get_raw_sheet(fpath)
-        _sheet_cache[project_id] = data  # cache it
+        _sheet_cache[project_id] = data  # store in memory
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -201,6 +192,44 @@ def master_projects():
     user = get_current_user()
     projects = get_master_projects(user["username"])
     return jsonify(projects)
+
+
+@app.route("/api/monitor/sheet", methods=["GET"])
+@login_required
+def get_monitor_sheet():
+    """Return the raw sheet data for the user's monitoring file."""
+    from excel_db import get_raw_sheet, get_discipline_dirs
+    user = get_current_user()
+    short = user.get("short_name", "").upper()
+    _, monitoring_dir, sched_cache, _ = get_discipline_dirs(user["role"])
+
+    # Check in-memory cache
+    cache_key = "monitor_" + short
+    if cache_key in _sheet_cache:
+        return jsonify(_sheet_cache[cache_key])
+
+    # Find monitoring file
+    if not os.path.exists(monitoring_dir):
+        return jsonify({"error": "No monitoring file found"}), 404
+
+    fpath = None
+    for fname in os.listdir(monitoring_dir):
+        if not (fname.endswith(".xlsb") or fname.endswith(".xlsx")):
+            continue
+        parts = fname.split("_")
+        if len(parts) >= 2 and parts[1].upper() == short:
+            fpath = os.path.join(monitoring_dir, fname)
+            break
+
+    if not fpath:
+        return jsonify({"error": "No monitoring file found"}), 404
+
+    try:
+        data = get_raw_sheet(fpath)
+        _sheet_cache[cache_key] = data
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/debug", methods=["GET"])
@@ -232,11 +261,9 @@ def rebuild_index():
     user = get_current_user()
     if user["role"] != "admin":
         return jsonify({"error": "Access denied"}), 403
-    try:
-        projects = build_index()
-        return jsonify({"message": f"Index rebuilt: {len(projects)} projects"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    # Clear in-memory sheet cache so all projects reload fresh
+    _sheet_cache.clear()
+    return jsonify({"message": "Cache cleared successfully"})
 
 
 # ── User management (admin only) ──────────────────────────────
