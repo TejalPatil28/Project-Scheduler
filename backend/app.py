@@ -14,6 +14,7 @@ from excel_db import (
     delete_user,
     update_index_entry,
     get_master_projects,
+    get_discipline_dirs,
     OWNER_MAP,
 )
 
@@ -159,7 +160,15 @@ def save_tasks(project_id):
     ok, msg = update_tasks_bulk(project_id, data, role=role)
     if not ok:
         return jsonify({"error": msg}), 404
-    _sheet_cache.pop(project_id, None)  # clear so next open is fresh
+     # Update in-memory cache instead of clearing it
+    if project_id in _sheet_cache:
+        # Reload the cache from disk (which we just updated)
+        from excel_db import _read_sheet_cache
+        _, _, sched_cache, _ = get_discipline_dirs(role)
+        updated_cache = _read_sheet_cache(project_id, sched_cache)
+        if updated_cache:
+            _sheet_cache[project_id] = updated_cache
+    
     return jsonify({"message": msg})
 
 @app.route("/api/projects/<project_id>/sheet", methods=["GET"])

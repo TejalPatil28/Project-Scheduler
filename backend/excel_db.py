@@ -1,6 +1,9 @@
 import os
 import openpyxl
 from datetime import datetime, date
+import threading
+import queue
+
 
 # ── Paths ──────────────────────────────────────────────────────
 BASE_DIR        = os.path.dirname(__file__)
@@ -163,6 +166,99 @@ def _read_sheet_cache(project_id, sched_cache=None):
         return data
     except Exception:
         return None
+
+def _update_sheet_cache(project_id, updates, sched_cache=None):
+    """
+    Apply updates directly to the sheet JSON cache without reading Excel.
+    Updates should be in the same format as received from frontend.
+    """
+    cache_path = _sheet_cache_path(project_id, sched_cache)
+    
+    if not os.path.exists(cache_path):
+        # No cache to update, nothing to do
+        return False
+    
+    try:
+        with open(cache_path, 'r') as f:
+            sheet_data = json.load(f)
+        
+        cells = sheet_data.get('cells', {})
+        
+        # Process each update
+        for update in updates:
+            if '_row' in update:
+                # Row-based update (from sheet inputs)
+                row = update['_row']
+                
+                # Map field to column
+                field_to_col = {
+                    'actual_start': 'X',
+                    'actual_end': 'Y',
+                    'percent_complete': 'Z',
+                    'help_required': 'AD',
+                    'remark': 'AF'
+                }
+                
+                for field, value in update.items():
+                    if field == '_row':
+                        continue
+                    
+                    col = field_to_col.get(field)
+                    if not col:
+                        continue
+                    
+                    coord = f"{col}{row}"
+                    
+                    if coord in cells:
+                        # Update the cell value
+                        if field == 'percent_complete':
+                            # Format as percentage string
+                            cells[coord]['v'] = f"{int(value)}%"
+                        else:
+                            cells[coord]['v'] = value
+                        # Mark that this cell was edited (optional, for debugging)
+                        cells[coord]['edited'] = True
+                        
+            elif 'task_key' in update:
+                # Task-key based update (from old task system)
+                # Find the row by task_key
+                task_key = update['task_key']
+                percent = update.get('percent_complete')
+                remark = update.get('remark')
+                
+                for coord, cell_data in cells.items():
+                    # Check if this cell is in the task rows (H or I columns)
+                    # H = task_code, I = task_name
+                    if coord[0] in ('H', 'I'):
+                        row_num = int(coord[1:])
+                        if row_num >= 9 and row_num <= 55:
+                            # Build task key from H and I cells
+                            h_coord = f"H{row_num}"
+                            i_coord = f"I{row_num}"
+                            h_val = cells.get(h_coord, {}).get('v', '')
+                            i_val = cells.get(i_coord, {}).get('v', '')
+                            current_key = f"{h_val}_{i_val}".strip()
+                            
+                            if current_key == task_key:
+                                if percent is not None:
+                                    z_coord = f"Z{row_num}"
+                                    if z_coord in cells:
+                                        cells[z_coord]['v'] = f"{int(percent)}%"
+                                if remark is not None:
+                                    af_coord = f"AF{row_num}"
+                                    if af_coord in cells:
+                                        cells[af_coord]['v'] = remark
+                                break
+        
+        # Write updated cache back
+        with open(cache_path, 'w') as f:
+            json.dump(sheet_data, f, indent=2)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Failed to update sheet cache for {project_id}: {e}")
+        return False
 
 def _invalidate_sheet_cache(project_id, sched_cache=None):
     """Delete sheet JSON sidecar so next open re-reads from Excel."""
@@ -565,67 +661,22 @@ def update_task(project_id, task_code, percent_complete, remark):
 
 def update_tasks_bulk(project_id, updates, role="sw_tl"):
     """
-    Bulk update multiple tasks at once.
-    Supports two update formats:
-    1. Task-key based: {task_key, percent_complete, remark}
-    2. Row-based (from sheet inputs): {_row, actual_start?, actual_end?, percent_complete?, help_required?}
+    Bulk update multiple tasks.
+    - Updates JSON cache immediately (fast)
+    - Queues Excel write for background (slow)
     """
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
-    fname = project_id + ".xlsx"
-    fpath = os.path.join(projects_dir, fname)
-    if not os.path.exists(fpath):
-        return False, "Project file not found"
-
-    wb = openpyxl.load_workbook(fpath)
-    ws = wb.active
-
-    # Separate row-based updates from task-key updates
-    row_updates  = {u["_row"]: u for u in updates if "_row" in u}
-    task_updates = {u["task_key"]: u for u in updates if "task_key" in u}
-    updated = 0
-
-    for row in range(TASK_START_ROW, TASK_END_ROW + 1):
-        code = ws[f"H{row}"].value
-        name = ws[f"I{row}"].value
-
-        # ── Row-based update (from sheet input cells) ──
-        if row in row_updates:
-            u = row_updates[row]
-            if "actual_start" in u and u["actual_start"]:
-                ws[f"X{row}"] = u["actual_start"]
-            if "actual_end" in u and u["actual_end"]:
-                ws[f"Y{row}"] = u["actual_end"]
-            if "percent_complete" in u and u["percent_complete"] is not None:
-                try:
-                    ws[f"Z{row}"] = float(u["percent_complete"]) / 100.0
-                except (ValueError, TypeError):
-                    pass
-            if "help_required" in u:
-                ws[f"AD{row}"] = u["help_required"] or ""
-            if "remark" in u:
-                ws[f"AF{row}"] = u["remark"] or ""
-            updated += 1
-
-        # ── Task-key based update ──
-        if not code:
-            continue
-        row_key = f"{code}_{str(name).strip()}" if name else str(code)
-        if row_key in task_updates:
-            u = task_updates[row_key]
-            ws[f"Z{row}"] = u["percent_complete"] / 100.0
-            if "actual_start" in u and u["actual_start"]:
-                ws[f"X{row}"] = u["actual_start"]
-            if "actual_end" in u and u["actual_end"]:
-                ws[f"Y{row}"] = u["actual_end"]
-            ws[f"AF{row}"] = u.get("remark") or ""
-            updated += 1
-
-    wb.save(fpath)
-
-    # Invalidate sheet JSON cache so next open re-reads fresh from Excel
-    _invalidate_sheet_cache(project_id, sched_cache)
-    return True, f"Updated {updated} tasks"
-
+    
+    # Step 1: Update JSON cache immediately (fast)
+    _update_sheet_cache(project_id, updates, sched_cache)
+    
+    # Step 2: Queue Excel write to background thread
+    queue_excel_write(project_id, updates, role)
+    
+    # Step 3: Count how many changes were made
+    updated_count = len(updates)
+    
+    return True, f"Updated {updated_count} tasks (Excel syncing in background)"
 
 def create_user(name, short_name, username, password, role):
     """Add a new user to users.xlsx."""
@@ -1048,6 +1099,8 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         except Exception:
             return False
 
+    # Rows to exclude from grid display (AE6/AF6 warranty shown in left panel)
+
     for row in ws.iter_rows(min_row=TASK_START_ROW, max_row=max_row):
         for cell in row:
             try:
@@ -1060,8 +1113,44 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                     # AF (remarks) is always editable in task rows regardless of fill
                     # Other cols require the blue fill color
                     if col_letter == "AF" or _is_editable_fill(cell):
-                        cells[coord]["editable"] = True
-                        cells[coord]["editable_col"] = col_letter
+                        # For AD column: add department color + only editable if Z < 100
+                        if col_letter == "AD":
+                            AD_COLORS = {
+                                "engineering":       "#ffb3b3",
+                                "purchase":          "#5f933c",
+                                "software":          "#0096cc",
+                                "project management":"#005fa3",
+                                "manufacturing":     "#2f491e",
+                                "sales":             "#00d9d9",
+                                "client":            "#6d006d",
+                            }
+                            val = cell.value
+                            if val:
+                                color = AD_COLORS.get(str(val).strip().lower())
+                                if color:
+                                    cells[coord]["fill"] = color
+                                    # Set text color white for dark backgrounds
+                                    dark_bgs = {"#5f933c","#0096cc","#005fa3","#2f491e","#6d006d"}
+                                    cells[coord]["font"] = cells[coord].get("font", {})
+                                    cells[coord]["font"]["color"] = "#ffffff" if color in dark_bgs else "#000000"
+                            # Only editable if Z column (% complete) < 100
+                            z_coord = "Z" + str(cell.row)
+                            z_cell = ws[z_coord]
+                            z_val = z_cell.value
+                            z_pct = 0
+                            try:
+                                if z_val is not None:
+                                    z_pct = float(z_val)
+                                    if z_pct <= 1.0:
+                                        z_pct = z_pct * 100
+                            except (TypeError, ValueError):
+                                z_pct = 0
+                            if z_pct < 100:
+                                cells[coord]["editable"] = True
+                                cells[coord]["editable_col"] = col_letter
+                        else:
+                            cells[coord]["editable"] = True
+                            cells[coord]["editable_col"] = col_letter
 
     # Read project info from header rows for banner
     def _v(ref):
@@ -1073,7 +1162,7 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         if v is None: return ""
         if isinstance(v, (datetime, date)):
             d = v.date() if isinstance(v, datetime) else v
-            return d.strftime("%d-%m-%Y")
+            return d.strftime("%d %b %Y")
         return str(v).strip()
 
     # W2 may be empty — fall back to X9 (first task actual start date)
@@ -1118,6 +1207,9 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             {"label": _v("B32") or "B32", "pm": _date("C32"), "swe": _date("D32"), "pm_fill": _resolve_color(ws["C32"].fill.fgColor) if ws["C32"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C32"].font.color), "swe_fill": _resolve_color(ws["D32"].fill.fgColor) if ws["D32"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D32"].font.color)},
             {"label": _v("B33") or "B33", "pm": _date("C33"), "swe": _date("D33"), "pm_fill": _resolve_color(ws["C33"].fill.fgColor) if ws["C33"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C33"].font.color), "swe_fill": _resolve_color(ws["D33"].fill.fgColor) if ws["D33"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D33"].font.color)},
         ],
+        "warranty": [
+            {"label": _v("AE6") or "Warranty", "value": _v("AF6")},
+        ],
         "stakeholders": [
             {"label": _v("B36") or "Sales",  "value": _v("C36")},
             {"label": _v("B37") or "PM",     "value": _v("C37")},
@@ -1159,3 +1251,105 @@ def delete_user(username):
             wb.save(USERS_PATH)
             return True, "User deleted"
     return False, "User not found"
+
+
+# Add this code at the VERY END of the file
+
+# Global queue for Excel write operations
+_excel_write_queue = queue.Queue()
+_background_thread_started = False
+
+def _start_background_worker():
+    """Start a background thread that processes Excel writes"""
+    global _background_thread_started
+    if _background_thread_started:
+        return
+    
+    def worker():
+        while True:
+            try:
+                # Wait for a task
+                project_id, updates, role = _excel_write_queue.get(timeout=1)
+                try:
+                    _do_excel_write(project_id, updates, role)
+                    print(f"[Background] Excel write completed for {project_id}")
+                except Exception as e:
+                    print(f"[Background] Error writing {project_id}: {e}")
+                finally:
+                    _excel_write_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[Background] Worker error: {e}")
+    
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    _background_thread_started = True
+    print("[Background] Excel write worker started")
+
+def _do_excel_write(project_id, updates, role):
+    """Actually write to Excel file (this is the slow part)"""
+    from openpyxl import load_workbook
+    import os
+    
+    projects_dir, _, _, _ = get_discipline_dirs(role)
+    fpath = os.path.join(projects_dir, project_id + ".xlsx")
+    
+    if not os.path.exists(fpath):
+        fpath = os.path.join(projects_dir, project_id + ".xlsb")
+        if not os.path.exists(fpath):
+            print(f"[Background] Excel file not found for {project_id}")
+            return
+    
+    # Load workbook
+    wb = load_workbook(fpath)
+    ws = wb.active
+    
+    # Apply updates
+    row_updates = {u["_row"]: u for u in updates if "_row" in u}
+    task_updates = {u["task_key"]: u for u in updates if "task_key" in u}
+    
+    TASK_START_ROW = 9
+    TASK_END_ROW = 55
+    
+    for row in range(TASK_START_ROW, TASK_END_ROW + 1):
+        # Row-based update
+        if row in row_updates:
+            u = row_updates[row]
+            if "actual_start" in u and u["actual_start"]:
+                ws[f"X{row}"] = u["actual_start"]
+            if "actual_end" in u and u["actual_end"]:
+                ws[f"Y{row}"] = u["actual_end"]
+            if "percent_complete" in u and u["percent_complete"] is not None:
+                try:
+                    ws[f"Z{row}"] = float(u["percent_complete"]) / 100.0
+                except (ValueError, TypeError):
+                    pass
+            if "help_required" in u:
+                ws[f"AD{row}"] = u["help_required"] or ""
+            if "remark" in u:
+                ws[f"AF{row}"] = u["remark"] or ""
+        
+        # Task-key based update
+        else:
+            code = ws[f"H{row}"].value
+            name = ws[f"I{row}"].value
+            if code and name:
+                row_key = f"{code}_{str(name).strip()}"
+                if row_key in task_updates:
+                    u = task_updates[row_key]
+                    ws[f"Z{row}"] = u["percent_complete"] / 100.0
+                    if "actual_start" in u and u["actual_start"]:
+                        ws[f"X{row}"] = u["actual_start"]
+                    if "actual_end" in u and u["actual_end"]:
+                        ws[f"Y{row}"] = u["actual_end"]
+                    ws[f"AF{row}"] = u.get("remark") or ""
+    
+    # Save workbook
+    wb.save(fpath)
+    print(f"[Background] Excel file saved: {fpath}")
+
+def queue_excel_write(project_id, updates, role):
+    """Queue a project for background Excel write"""
+    _start_background_worker()  # Ensure worker is running
+    _excel_write_queue.put((project_id, updates, role))

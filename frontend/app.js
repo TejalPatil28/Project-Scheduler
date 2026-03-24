@@ -169,6 +169,10 @@ function buildPopoverHTML() {
           '</div>',
           '<div class="theme-toggle ' + (isDark ? "" : "on") + '" id="theme-toggle"><div class="theme-thumb"></div></div>',
         '</div>',
+        '<div class="popover-sep"></div>',
+        '<button class="popover-item" onclick="switchToDashboard(); closeSettingsPopover();">\u{1F4CA} Dashboard</button>',
+        '<button class="popover-item" onclick="switchToMonitor(); closeSettingsPopover();">\u{1F50D} Monitor</button>',
+        '<button class="popover-item" onclick="switchToProjects(); closeSettingsPopover();">\u{1F4C1} Projects</button>',
         adminItems,
         '<div class="popover-sep"></div>',
         '<button class="popover-item danger" onclick="doLogout()">\u23FB Sign Out</button>',
@@ -186,20 +190,14 @@ function renderShell() {
       '<div class="topbar">',
         '<div class="topbar-left">',
           '<div class="topbar-brand">',
-            '<div class="brand-icon" style="width:28px;height:28px;font-size:14px">&#x2B21;</div>',
+            '<div class="brand-icon" style="width:28px;height:28px;font-size:16px;font-weight:800;color:white;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;">W</div>',
             '<div>',
               '<div class="brand-name">Workezz</div>',
               '<div class="brand-ver">Project Scheduler</div>',
             '</div>',
           '</div>',
-          '<div class="topbar-divider"></div>',
-          '<div id="topbar-back-slot"></div>',
-          '<div class="topbar-nav">',
-            '<button class="topbar-nav-btn active" id="nav-btn-dashboard" onclick="switchToDashboard()">Dashboard</button>',
-            '<button class="topbar-nav-btn" id="nav-btn-monitor" onclick="switchToMonitor()">Monitor</button>',
-            '<button class="topbar-nav-btn" id="nav-btn-projects" onclick="switchToProjects()">Projects</button>',
-          '</div>',
-          '<div class="page-title hidden" id="topbar-title"></div>',
+          
+          
         '</div>',
         '<div class="topbar-right" id="topbar-right">',
           '<div class="topbar-user-chip">',
@@ -230,7 +228,7 @@ function renderShell() {
         '</aside>',
         // Mobile topbar (mobile only)
         '<div class="mobile-topbar" id="mobile-topbar">',
-          '<div class="brand-icon" style="width:26px;height:26px;font-size:14px">&#x2B21;</div>',
+          '<div class="brand-icon" style="width:26px;height:26px;font-size:15px;font-weight:800;color:white;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;">W</div>',
           '<div id="mobile-title" style="font-family:var(--font-display);font-size:14px;font-weight:700;flex:1">Projects</div>',
         '</div>',
         '<div class="main">',
@@ -849,6 +847,9 @@ function renderProjectPage() {
   ].join("");
 
   container.innerHTML = [
+    '<div class="project-header-bar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:var(--bg2);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0;">',
+    '<div class="project-title" style="font-family:var(--font-display);font-size:18px;font-weight:700;color:var(--text1);">' + h(state.project.customer_name || state.project.id) + '</div>',
+  '</div>',
     '<div class="proj-body-layout">',
       '<div class="proj-body-right" style="flex:1;min-width:0">',
         '<div class="xl-wrap" id="xl-wrap">',
@@ -965,7 +966,7 @@ function renderExcelMirror(container, data) {
       var opts = AD_OPTIONS.map(function(o) {
         return "<option value=\"" + o + "\"" + (o === curVal ? " selected" : "") + ">" + o + "</option>";
       }).join("");
-      input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\"><option value=\"\"></option>" + opts + "</select>";
+      input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this);__applyAdColor(this)\" ><option value=\"\"></option>" + opts + "</select>";
     } else if (col === "AF") {
       // Remarks - free text input, use light text in dark mode since no Excel fill
       var afStyle = inputStyle.replace("color:#000000", "color:" + (isDark ? "#e0e0e0" : "#000000"));
@@ -1076,16 +1077,19 @@ function renderExcelMirror(container, data) {
     // ── Build left panel HTML ────────────────────────────────
     var lpBg      = isDark ? "#161616" : "#f0f4f8";
     var lpBorder  = isDark ? "#2a2a2a" : "#d0d8e4";
-    var lpLabel   = isDark ? "#666666" : "#888888";
-    var lpValue   = isDark ? "#e0e0e0" : "#111111";
+    var lpLabel   = isDark ? "#555555" : "#888888";
+    var lpValue   = isDark ? "#888888" : "#333333";
     var lpSection = isDark ? "#333333" : "#d8e2ee";
     var lpFont    = "font-family:Calibri,Arial,sans-serif;";
 
-    function lpRow(label, value) {
+    function lpRow(label, value, wrap) {
       if (!label) return "";
+      var valueStyle = wrap
+        ? lpFont + 'font-size:11px;font-weight:400;color:' + lpValue + ';white-space:normal;word-break:break-word;'
+        : lpFont + 'font-size:11px;font-weight:400;color:' + lpValue + ';text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;cursor:default;';
       return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:2px 10px;gap:8px;">' +
         '<span style="' + lpFont + 'font-size:11px;font-weight:600;color:' + lpLabel + ';white-space:nowrap;">' + h(label) + '</span>' +
-        '<span title="' + h(value || "") + '" style="' + lpFont + 'font-size:11px;font-weight:700;color:' + lpValue + ';text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;cursor:default;">' + h(value || "—") + '</span>' +
+        '<span title="' + h(value || "") + '" style="' + valueStyle + '">' + h(value || "—") + '</span>' +
       '</div>';
     }
 
@@ -1120,7 +1124,8 @@ function renderExcelMirror(container, data) {
     var removedPI = new Set([0, 1, 4, 6]);
     (leftPanel.project_info || []).forEach(function(item, idx) {
       if (removedPI.has(idx)) return;
-      leftPanelHtml += lpRow(item.label, item.value);
+      var wrap = (idx === 2 || idx === 3); // End Customer, Consultant
+      leftPanelHtml += lpRow(item.label, item.value, wrap);
     });
     // Dates — two column table (PM | SWE) with Excel cell colors
     leftPanelHtml += lpSectionHeader("Dates");
@@ -1152,6 +1157,13 @@ function renderExcelMirror(container, data) {
       if (userShort && (item.value || "").toUpperCase() === userShort) return;
       leftPanelHtml += lpRow(item.label, item.value);
     });
+    // Warranty
+    if ((leftPanel.warranty || []).some(function(w){ return w.value; })) {
+      leftPanelHtml += lpSectionHeader("Warranty");
+      (leftPanel.warranty || []).forEach(function(item) {
+        leftPanelHtml += lpRow(item.label, item.value, true);
+      });
+    }
     leftPanelHtml += '</div>'; // end inner
     leftPanelHtml += '</div>'; // end panel
 
@@ -1240,7 +1252,7 @@ function renderExcelMirror(container, data) {
       var dataRowIndex = r - infoRows.length;
       var isEvenDataRow = (dataRowIndex % 2 === 0);
 
-      var rowBg = isEvenDataRow ? xlZebraEven : xlZebraOdd;
+      var rowBg = (r === 7 || r === 8) ? "#fcd5b4" : (isEvenDataRow ? xlZebraEven : xlZebraOdd);
       html += '<tr style="height:' + rh + 'px;background:' + rowBg + '">';
       html += '<td style="position:sticky;left:0;z-index:3;background:' + xlCornerBg + ';color:' + xlRowNumColor + ';text-align:center;font-size:10px;border:1px solid ' + xlBorder + ';min-width:28px;width:28px;user-select:none">' + r + '</td>';
 
@@ -1624,3 +1636,4 @@ async function doDeleteUser(username, name) {
 
 // ── Boot ───────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", init);
+

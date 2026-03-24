@@ -462,3 +462,21 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text1);font-s
 /* Adjust xl-wrap when inside proj-body-right */
 .proj-body-right{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;}
 .proj-body-right .xl-wrap{border-radius:0 !important;border:none !important;margin:0 !important;flex:1;overflow:auto;background:var(--bg);}
+
+.master-search-wrap {
+  flex-shrink: 0;
+}
+
+.master-search-wrap .form-input {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text1);
+  font-family: var(--font-body);
+}
+
+.master-search-wrap .form-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
