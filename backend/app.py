@@ -157,26 +157,30 @@ def save_tasks(project_id):
             if item.get("owner") != allowed_owner:
                 return jsonify({"error": f"You can only update {allowed_owner} tasks"}), 403
 
-    ok, msg = update_tasks_bulk(project_id, data, role=role)
+    ok, msg, now_str = update_tasks_bulk(project_id, data, role=role)
     if not ok:
         return jsonify({"error": msg}), 404
-     # Update in-memory cache instead of clearing it
-    if project_id in _sheet_cache:
-        # Reload the cache from disk (which we just updated)
-        from excel_db import _read_sheet_cache
-        _, _, sched_cache, _ = get_discipline_dirs(role)
-        updated_cache = _read_sheet_cache(project_id, sched_cache)
-        if updated_cache:
-            _sheet_cache[project_id] = updated_cache
-    
-    return jsonify({"message": msg})
+
+    # Reload the in-memory cache from the JSON sidecar that _update_sheet_cache
+    # just wrote. This ensures the next sheet fetch returns the updated cell values,
+    # not the stale pre-save data that was sitting in _sheet_cache.
+    from excel_db import _read_sheet_cache, get_discipline_dirs
+    _, _, sched_cache, _ = get_discipline_dirs(role)
+    fresh = _read_sheet_cache(project_id, sched_cache)
+    if fresh:
+        _sheet_cache[project_id] = fresh
+    elif project_id in _sheet_cache:
+        # JSON sidecar missing (edge case) — at least patch timestamp so it's not wrong
+        if now_str:
+            _sheet_cache[project_id]["last_modified"] = now_str
+
+    return jsonify({"message": msg, "last_modified": now_str})
 
 @app.route("/api/projects/<project_id>/sheet", methods=["GET"])
 @login_required
 def get_sheet_data(project_id):
     """Return raw cell data for the Excel-mirror UI. Cached in memory."""
     from excel_db import get_raw_sheet, PROJECTS_DIR
-    # Check cache first
     # Check in-memory cache first (fastest)
     if project_id in _sheet_cache:
         return jsonify(_sheet_cache[project_id])
@@ -189,6 +193,14 @@ def get_sheet_data(project_id):
             return jsonify({"error": "Project file not found"}), 404
     try:
         data = get_raw_sheet(fpath)
+        # Inject last_modified from file mtime if get_raw_sheet didn't already
+        if not data.get("last_modified"):
+            from datetime import datetime as _dt
+            try:
+                ts = os.path.getmtime(fpath)
+                data["last_modified"] = _dt.fromtimestamp(ts).strftime("%d %b %Y, %I:%M %p")
+            except Exception:
+                data["last_modified"] = None
         _sheet_cache[project_id] = data  # store in memory
         return jsonify(data)
     except Exception as e:

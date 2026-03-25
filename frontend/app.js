@@ -895,9 +895,9 @@ function renderProjectPage() {
   ].join("");
 
   container.innerHTML = [
-     '<div class="project-header-bar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:var(--bg2);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0;">',
+  '<div class="project-header-bar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:var(--bg2);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0;">',
     '<div class="project-title" style="font-family:var(--font-display);font-size:18px;font-weight:700;color:var(--text1);">' + h(state.project.customer_name || state.project.id) + '</div>',
-    '<div id="project-timestamp" class="project-timestamp" style="font-size:11px;color:var(--text2);font-family:var(--font-mono);"></div>',
+    '<div id="project-timestamp" style="font-size:11px;color:var(--text2);font-family:var(--font-mono);">Last updated: --</div>',
   '</div>',
     '<div class="proj-body-layout">',
       '<div class="proj-body-right" style="flex:1;min-width:0">',
@@ -921,7 +921,12 @@ function renderProjectPage() {
   renderXLGrid();
 }
 
-
+function updateProjectHeaderTimestamp(timestamp) {
+  var timestampEl = document.getElementById("project-timestamp");
+  if (timestampEl && timestamp) {
+    timestampEl.textContent = "Last updated: " + timestamp;
+  }
+}
 
 function onMfgLocChange(val) {
   state.project.mfg_loc = val;
@@ -958,10 +963,20 @@ async function loadSheetView() {
     // Use client-side cache if available — instant re-open
     if (state.sheetCache[pid]) {
       renderExcelMirror(wrap, state.sheetCache[pid]);
+
+      if (state.sheetCache[pid].last_modified) {
+        updateProjectHeaderTimestamp(state.sheetCache[pid].last_modified);
+      }
+
       return;
     }
     var data = await API.req("GET", "/projects/" + pid + "/sheet");
     state.sheetCache[pid] = data;  // cache in browser
+    // Update timestamp
+    if (data.last_modified) {
+      updateProjectHeaderTimestamp(data.last_modified);
+    }
+
     renderExcelMirror(wrap, data);
   } catch(err) {
     wrap.innerHTML = '<div style="padding:20px;color:var(--text3)">Could not load sheet: ' + h(err.message||"error") + '</div>';
@@ -1781,9 +1796,10 @@ async function saveChanges() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px"></span>';
   try {
+    var saveRes = null;
     // Send task updates (existing system)
     if (taskUpdates.length) {
-      await API.saveTasks(state.project.id, taskUpdates);
+      saveRes = await API.saveTasks(state.project.id, taskUpdates);
       taskUpdates.forEach(function(u) {
         var task = state.tasks.find(function(t) { return taskKey(t) === u.task_key; });
         if (task) { task.percent_complete = u.percent_complete; task.remark = u.remark; }
@@ -1791,13 +1807,26 @@ async function saveChanges() {
     }
     // Send row-based edits (sheet input cells)
     if (rowUpdates.length) {
-      await API.saveTasks(state.project.id, rowUpdates);
+      saveRes = await API.saveTasks(state.project.id, rowUpdates);
     }
     state.pendingChanges = {};
     updateSaveBar();
     var total = taskUpdates.length + rowUpdates.length;
     toast("Saved " + total + " change" + (total > 1 ? "s" : "") + " \u2713");
-    // Invalidate client cache so re-render fetches fresh data
+
+    // Use server-returned timestamp so it stays consistent after renderXLGrid re-fetch.
+    // The server stamps last_modified into its cache at save time, so this value
+    // will also be returned by the subsequent sheet fetch inside renderXLGrid.
+    var serverTs = saveRes && saveRes.last_modified;
+    if (serverTs) {
+      updateProjectHeaderTimestamp(serverTs);
+      // Patch client-side sheet cache too so loadSheetView cache-hit also shows it
+      if (state.project && state.sheetCache[state.project.id]) {
+        state.sheetCache[state.project.id].last_modified = serverTs;
+      }
+    }
+
+    // Invalidate client cache so re-render fetches fresh data from server
     if (state.project) delete state.sheetCache[state.project.id];
     renderXLGrid();
   } catch(err) {

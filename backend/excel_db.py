@@ -221,44 +221,41 @@ def _update_sheet_cache(project_id, updates, sched_cache=None):
                         
             elif 'task_key' in update:
                 # Task-key based update (from old task system)
-                # Find the row by task_key
                 task_key = update['task_key']
                 percent = update.get('percent_complete')
                 remark = update.get('remark')
-                
-                for coord, cell_data in cells.items():
-                    # Check if this cell is in the task rows (H or I columns)
-                    # H = task_code, I = task_name
-                    if coord[0] in ('H', 'I'):
-                        row_num = int(coord[1:])
-                        if row_num >= 9 and row_num <= 55:
-                            # Build task key from H and I cells
-                            h_coord = f"H{row_num}"
-                            i_coord = f"I{row_num}"
-                            h_val = cells.get(h_coord, {}).get('v', '')
-                            i_val = cells.get(i_coord, {}).get('v', '')
-                            current_key = f"{h_val}_{i_val}".strip()
-                            
-                            if current_key == task_key:
-                                if percent is not None:
-                                    z_coord = f"Z{row_num}"
-                                    if z_coord in cells:
-                                        cells[z_coord]['v'] = f"{int(percent)}%"
-                                if remark is not None:
-                                    af_coord = f"AF{row_num}"
-                                    if af_coord in cells:
-                                        cells[af_coord]['v'] = remark
-                                break
+
+                # Direct row lookup — O(n rows) instead of O(n cells)
+                for row_num in range(9, 56):
+                    h_val = cells.get(f"H{row_num}", {}).get('v', '') or ''
+                    i_val = cells.get(f"I{row_num}", {}).get('v', '') or ''
+                    current_key = f"{h_val}_{str(i_val).strip()}"
+                    if current_key == task_key:
+                        if percent is not None:
+                            z_coord = f"Z{row_num}"
+                            if z_coord in cells:
+                                cells[z_coord]['v'] = f"{int(percent)}%"
+                        if remark is not None:
+                            af_coord = f"AF{row_num}"
+                            if af_coord in cells:
+                                cells[af_coord]['v'] = remark
+                        break
         
+        # Stamp last_modified with current time — JSON mtime is the source of truth
+        # for "last edited via the app", more accurate than the Excel file mtime
+        # because the Excel write happens in a background thread.
+        now_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
+        sheet_data['last_modified'] = now_str
+
         # Write updated cache back
         with open(cache_path, 'w') as f:
             json.dump(sheet_data, f, indent=2)
-        
-        return True
+
+        return now_str  # return so caller can propagate to in-memory cache + response
         
     except Exception as e:
         print(f"Failed to update sheet cache for {project_id}: {e}")
-        return False
+        return None
 
 def _invalidate_sheet_cache(project_id, sched_cache=None):
     """Delete sheet JSON sidecar so next open re-reads from Excel."""
@@ -577,7 +574,7 @@ def get_tasks(project_id, owner_filter=None, role="sw_tl"):
         fpath = os.path.join(projects_dir, project_id + ".xlsx")
         if not os.path.exists(fpath):
             return []
-        sheet = get_raw_sheet(fpath)  # this will also write the JSON cache
+        sheet = get_raw_sheet(fpath, sched_cache=sched_cache)  # pass correct cache dir
 
     cells = sheet.get("cells", {})
     tasks = []
@@ -666,17 +663,17 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     - Queues Excel write for background (slow)
     """
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
-    
-    # Step 1: Update JSON cache immediately (fast)
-    _update_sheet_cache(project_id, updates, sched_cache)
-    
+
+    # Step 1: Update JSON cache immediately (fast) — returns stamped timestamp
+    now_str = _update_sheet_cache(project_id, updates, sched_cache)
+
     # Step 2: Queue Excel write to background thread
     queue_excel_write(project_id, updates, role)
-    
+
     # Step 3: Count how many changes were made
     updated_count = len(updates)
-    
-    return True, f"Updated {updated_count} tasks (Excel syncing in background)"
+
+    return True, f"Updated {updated_count} tasks (Excel syncing in background)", now_str
 
 
 def create_user(name, short_name, username, password, role):
@@ -889,7 +886,6 @@ def _resolve_color(color_obj):
 
 def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     """Read cell values + basic formatting. Uses JSON sidecar cache for speed."""
-    from openpyxl.utils import get_column_letter as gcl
 
     # Check JSON sidecar cache first
     project_id = os.path.splitext(os.path.basename(filepath))[0]
@@ -1234,6 +1230,22 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         ],
     }
 
+    # Determine last_modified:
+    # Prefer the JSON sidecar mtime — it reflects the last app-side edit and is
+    # written synchronously, so it's always accurate even while the background
+    # Excel write is still pending.
+    # Fall back to the Excel file mtime if no sidecar exists yet.
+    last_modified_str = None
+    try:
+        json_path = _sheet_cache_path(project_id, sched_cache)
+        if os.path.exists(json_path):
+            ts = os.path.getmtime(json_path)
+        else:
+            ts = os.path.getmtime(filepath)
+        last_modified_str = datetime.fromtimestamp(ts).strftime("%d %b %Y, %I:%M %p")
+    except Exception:
+        pass
+
     result = {
         "cells":          cells,
         "col_widths":     col_widths,
@@ -1247,6 +1259,7 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         "info_rows":      list(range(1, 6)),
         "header_rows":    [],
         "left_panel":     left_panel,
+        "last_modified":  last_modified_str,
     }
 
     # Write JSON sidecar cache for fast future loads
