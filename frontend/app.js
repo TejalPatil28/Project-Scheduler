@@ -895,8 +895,9 @@ function renderProjectPage() {
   ].join("");
 
   container.innerHTML = [
-    '<div class="project-header-bar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:var(--bg2);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0;">',
+     '<div class="project-header-bar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:var(--bg2);border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0;">',
     '<div class="project-title" style="font-family:var(--font-display);font-size:18px;font-weight:700;color:var(--text1);">' + h(state.project.customer_name || state.project.id) + '</div>',
+    '<div id="project-timestamp" class="project-timestamp" style="font-size:11px;color:var(--text2);font-family:var(--font-mono);"></div>',
   '</div>',
     '<div class="proj-body-layout">',
       '<div class="proj-body-right" style="flex:1;min-width:0">',
@@ -919,6 +920,7 @@ function renderProjectPage() {
 
   renderXLGrid();
 }
+
 
 
 function onMfgLocChange(val) {
@@ -994,10 +996,13 @@ function renderExcelMirror(container, data) {
     // ── COLOR CONFIGURATION ─────────────────────────────────
   // Define all custom background colors for columns/ranges
   // Add new rules here as needed
-    var colorRules = [
-    { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#d9d9d9" },
-    { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#90b4df" },
-  ];
+    var colorRules = isDark ? [
+      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#232a2e" },
+      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#1a2a3a" },
+    ] : [
+      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#d9d9d9" },
+      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#90b4df" },
+    ];
     // AD Column color mapping based on dropdown value
     var AD_COLORS = {
         "engineering":        "#ffb3b3",
@@ -1031,7 +1036,7 @@ function renderExcelMirror(container, data) {
 
   function renderInputCell(info, coord, col, tdStyle) {
     var curVal = _editPending[coord] !== undefined ? _editPending[coord] : (info.v || "");
-    var inputTextColor = "#000000";  // always black - inputs have light Excel fill background
+    var inputTextColor = isDark ? "#d8d8d8" : "#000000";  // contrast-aware
     var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;color:" + inputTextColor + ";";
     var input = "";
 
@@ -1057,9 +1062,8 @@ function renderExcelMirror(container, data) {
       }).join("");
       input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this);__applyAdColor(this)\" ><option value=\"\"></option>" + opts + "</select>";
     } else if (col === "AF") {
-      // Remarks - free text input, use light text in dark mode since no Excel fill
-      var afStyle = inputStyle.replace("color:#000000", "color:" + (isDark ? "#e0e0e0" : "#000000"));
-      input = "<input type=\"text\" style=\"" + afStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
+      // Remarks - free text input
+      input = "<input type=\"text\" style=\"" + inputStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
     }
     return input;
   }
@@ -1091,9 +1095,9 @@ function renderExcelMirror(container, data) {
 
   // Detect dark mode
   var isDark = document.documentElement.getAttribute("data-theme") !== "light";
-  var xlBg         = isDark ? "#1e1e1e" : "#ffffff";
-  var xlZebraOdd  = isDark ? "#1e1e1e" : "#ffffff";
-  var xlZebraEven = isDark ? "#242424" : "#f7f9fc";
+  var xlBg         = isDark ? "#1a1a1a" : "#ffffff";
+  var xlZebraOdd  = isDark ? "#1a1a1a" : "#ffffff";
+  var xlZebraEven = isDark ? "#1f1f1f" : "#f7f9fc";
 
   // ── Render project info banner ────────────────────────────
   var bBg       = isDark ? "#16213e" : "#2e5fa3";
@@ -1146,12 +1150,12 @@ function renderExcelMirror(container, data) {
   var xlCellBg   = isDark ? "#1e1e1e" : "#ffffff";
   var xlHeaderBg = isDark ? "#2a2a2a" : "#f2f2f2";
   var xlCornerBg = isDark ? "#242424" : "#e8e8e8";
-  var xlBorder   = isDark ? "#3a3a3a" : "#d0d0d0";
-  var xlCellBorder = isDark ? "#2e2e2e" : "#d4d4d4";
-  var xlText     = isDark ? "#e0e0e0" : "#000000";
-  var xlRowNumColor = isDark ? "#888888" : "#666666";
-  var xlGroupBarBg = isDark ? "#1a2a1a" : "#e8f0fe";
-  var xlGroupBarBorder = isDark ? "#2a4a2a" : "#c5d5f5";
+  var xlBorder   = isDark ? "#3a3a3a" : "#3a3a3a";
+  var xlCellBorder = isDark ? "#2e2e2e" : "#2e2e2e";
+  var xlText     = isDark ? "#1a1a1a" : "#1a1a1a";
+  var xlRowNumColor = isDark ? "#666666" : "#999999";
+  var xlGroupBarBg = isDark ? "#1a2620" : "#e8f5ee";
+  var xlGroupBarBorder = isDark ? "#2a4a38" : "#b8d8c8";
 
   function buildTable() {
     var tableStyle = [
@@ -1166,8 +1170,8 @@ function renderExcelMirror(container, data) {
     // ── Build left panel HTML ────────────────────────────────
     var lpBg      = isDark ? "#161616" : "#f0f4f8";
     var lpBorder  = isDark ? "#2a2a2a" : "#d0d8e4";
-    var lpLabel   = isDark ? "#555555" : "#888888";
-    var lpValue   = isDark ? "#888888" : "#333333";
+    var lpLabel   = isDark ? "#7a7777" : "#888888";
+    var lpValue   = isDark ? "#c2bfbf" : "#333333";
     var lpSection = isDark ? "#333333" : "#d8e2ee";
     var lpFont    = "font-family:Calibri,Arial,sans-serif;";
 
@@ -1264,10 +1268,9 @@ function renderExcelMirror(container, data) {
     html += '<table style="' + tableStyle + '">';
     html += '<thead>';
 
-    if (colGroups.length > 0) {
-      // ── GROUP BAR ROW ──
-      html += '<tr style="height:18px">';
-      html += '<th style="position:sticky;top:0;left:0;z-index:6;background:' + xlCornerBg + ';border:1px solid ' + xlBorder + ';min-width:28px;width:28px;"></th>';
+          if (colGroups.length > 0) {
+      // ── GROUP BAR ROW (buttons with borders) ──
+      html += '<tr style="height:20px;">';
 
       var ci = 0;
       while (ci < cols.length) {
@@ -1277,50 +1280,143 @@ function renderExcelMirror(container, data) {
         if (gi !== undefined && gi >= 0 && cols[ci] === colGroups[gi].cols[0]) {
           var group     = colGroups[gi];
           var collapsed = collapseState[gi];
-          var btnLabel  = collapsed ? "+" : "\u2212";
-          var btnBg     = collapsed ? "#d4edda" : "#fff3cd";
-          var btnStyle  = "cursor:pointer;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;border:1px solid #999;background:" + btnBg + ";color:#333;line-height:1.4;";
-
+          var btnLabel  = collapsed ? "+" : "–";
+          var btnStyle  = "cursor:pointer;font-size:11px;font-weight:700;padding:0px 6px;border-radius:3px;border:1px solid " + (isDark ? "#555" : "#aaa") + ";background:" + (isDark ? "#2a2a2a" : "#e8e8e8") + ";color:" + (isDark ? "#ddd" : "#333") + ";line-height:1.4;";
+          
           if (!collapsed) {
-            // Expanded: button above first col, empty cells for rest
+            // Expanded: show button above the first column of the group
             var firstW = colWidths[group.cols[0]] || 64;
-            html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';text-align:center;width:' + firstW + 'px;min-width:' + firstW + 'px">';
-            html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button></th>';
+            html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;text-align:left;padding:0 0 0 6px;width:' + firstW + 'px;">';
+            html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button>';
+            html += '</th>';
+            // Empty cells for the remaining columns in the group
             for (var gci = 1; gci < group.cols.length; gci++) {
               var gcw = colWidths[group.cols[gci]] || 64;
-              html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';width:' + gcw + 'px;min-width:' + gcw + 'px"></th>';
+              html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;width:' + gcw + 'px;"></th>';
             }
           } else {
-            // Collapsed: show only last col with button above it
+            // Collapsed: show button above the last column of the group (the only visible one)
             var lastCol = group.cols[group.cols.length - 1];
             var lastW   = colWidths[lastCol] || 64;
-            html += '<th style="position:sticky;top:0;z-index:4;background:' + xlGroupBarBg + ';border:1px solid ' + xlGroupBarBorder + ';text-align:center;width:' + lastW + 'px;min-width:' + lastW + 'px">';
-            html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button></th>';
+            html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;text-align:left;padding:0 0 0 6px;width:' + lastW + 'px;">';
+            html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button>';
+            html += '</th>';
           }
           ci += group.cols.length;
         } else {
           var cw = colWidths[col] || 64;
-          html += '<th style="position:sticky;top:0;z-index:4;background:' + xlCornerBg + ';border:1px solid ' + xlBorder + ';width:' + cw + 'px;min-width:' + cw + 'px"></th>';
+          html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;width:' + cw + 'px;"></th>';
           ci++;
         }
       }
-      html += '</tr>';
+      html += '<\/tr>';
     }
 
-    // ── COLUMN LETTER ROW ──
-    var topOffset = colGroups.length > 0 ? "18px" : "0";
-    html += '<tr>';
-    html += '<th style="position:sticky;top:' + topOffset + ';left:0;z-index:5;background:' + xlCornerBg + ';border:1px solid ' + xlBorder + ';min-width:28px;width:28px;font-size:10px;font-weight:normal"></th>';
-    for (var ci2 = 0; ci2 < cols.length; ci2++) {
-      var col2 = cols[ci2];
-      if (isCollapsedCol(col2)) continue;
-      var cw2 = colWidths[col2] || 64;
-      html += '<th style="position:sticky;top:' + topOffset + ';z-index:4;background:' + xlHeaderBg + ';color:' + xlRowNumColor + ';text-align:center;font-size:10px;font-weight:normal;border:1px solid ' + xlBorder + ';width:' + cw2 + 'px;min-width:' + cw2 + 'px">' + col2 + '</th>';
+    html += '</thead>';
+
+    // ── TBODY ──
+    html += '</thead>';
+
+    // ── CUSTOM HEADER ROW (replaces hidden Excel rows 6-8) ───────
+    // Defines semantic column headers for the task grid
+    var customHeaderDefs = {
+      // col letter -> label, and optional bg/text overrides
+      "E":  { label: "Buffer Time",         bg: "#fcd5b4", fg: "#000000" },
+      "F":  { label: "PH",           bg: "#fcd5b4", fg: "#000000" },
+      "G":  { label: "TFO",       bg: "#fcd5b4", fg: "#000000" },
+      "H":  { label: "Phase ID",     bg: "#fcd5b4", fg: "#000000" },
+      "I":  { label: "Task Description",     bg: "#fcd5b4", fg: "#000000" },
+      "J":  { label: "P1 Start Date",         bg: "#fcd5b4", fg: "#000000" },
+      "K":  { label: "P1 End Date",          bg: "#fcd5b4", fg: "#000000" },
+      "L":  { label: "P2 Start Date",   bg: "#fcd5b4", fg: "#000000" },
+      "M":  { label: "P2 End Date",           bg: "#fcd5b4", fg: "#000000" },
+      "N":  { label: "P3 Start Date",     bg: "#fcd5b4", fg: "#000000" },
+      "O":  { label: "P3 End Date",       bg: "#fcd5b4", fg: "#000000" },
+      "P":  { label: "Org Plan Date",       bg: "#fcd5b4", fg: "#000000" },
+      "Q":  { label: "Org End Date",        bg: "#fcd5b4", fg: "#000000" },
+      "R":  { label: "Ref. Lead Time",       bg: "#fcd5b4", fg: "#000000" },
+      "S":  { label: "Lead Time",       bg: "#fcd5b4", fg: "#000000" },
+      "T":  { label: "Intlk",         bg: "#fcd5b4", fg: "#000000" },
+      "U":  { label: "Effort Days",         bg: "#fcd5b4", fg: "#000000" },
+      "V":  { label: "Cur. Start Date",        bg: "#fcd5b4", fg: "#000000" },
+      "W":  { label: "Cur. End Date",     bg: "#fcd5b4", fg: "#000000" },
+      "X":  { label: "Act. Start Date",    bg: "#fcd5b4", fg: "#000000" },
+      "Y":  { label: "Act. End Date",      bg: "#fcd5b4", fg: "#000000" },
+      "Z":  { label: "% Complete",        bg: "#fcd5b4", fg: "#000000" },
+      "AA": { label: "Exptd % Completion",      bg: "#fcd5b4", fg: "#000000" },
+      "AB": { label: "Alert Date for 80%",        bg: "#fcd5b4", fg: "#000000" },
+      "AD": { label: "Help Req. from",     bg: "#fcd5b4", fg: "#000000" },
+      "AF": { label: "Remark",        bg: "#fcd5b4", fg: "#000000" },
+    };
+    // Light mode overrides
+    var customHeaderDefsLight = {
+      "E":  { label: "Buffer Time",         bg: "#fcd5b4", fg: "#000000" },
+      "F":  { label: "PH",           bg: "#fcd5b4", fg: "#000000" },
+      "G":  { label: "TFO",       bg: "#fcd5b4", fg: "#000000" },
+      "H":  { label: "Phase ID",     bg: "#fcd5b4", fg: "#000000" },
+      "I":  { label: "Task Description",     bg: "#fcd5b4", fg: "#000000" },
+      "J":  { label: "P1 Start Date",         bg: "#fcd5b4", fg: "#000000" },
+      "K":  { label: "P1 End Date",          bg: "#fcd5b4", fg: "#000000" },
+      "L":  { label: "P2 Start Date",   bg: "#fcd5b4", fg: "#000000" },
+      "M":  { label: "P2 End Date",           bg: "#fcd5b4", fg: "#000000" },
+      "N":  { label: "P3 Start Date",     bg: "#fcd5b4", fg: "#000000" },
+      "O":  { label: "P3 End Date",       bg: "#fcd5b4", fg: "#000000" },
+      "P":  { label: "Org Plan Date",       bg: "#fcd5b4", fg: "#000000" },
+      "Q":  { label: "Org End Date",        bg: "#fcd5b4", fg: "#000000" },
+      "R":  { label: "Ref. Lead Time",       bg: "#fcd5b4", fg: "#000000" },
+      "S":  { label: "Lead Time",       bg: "#fcd5b4", fg: "#000000" },
+      "T":  { label: "Intlk",         bg: "#fcd5b4", fg: "#000000" },
+      "U":  { label: "Effort Days",         bg: "#fcd5b4", fg: "#000000" },
+      "V":  { label: "Cur. Start Date",        bg: "#fcd5b4", fg: "#000000" },
+      "W":  { label: "Cur. End Date",     bg: "#fcd5b4", fg: "#000000" },
+      "X":  { label: "Act. Start Date",    bg: "#fcd5b4", fg: "#000000" },
+      "Y":  { label: "Act. End Date",      bg: "#fcd5b4", fg: "#000000" },
+      "Z":  { label: "% Complete",        bg: "#fcd5b4", fg: "#000000" },
+      "AA": { label: "Exptd % Completion",      bg: "#fcd5b4", fg: "#000000" },
+      "AB": { label: "Alert Date for 80%",        bg: "#fcd5b4", fg: "#000000" },
+      "AD": { label: "Help Req. from",     bg: "#fcd5b4", fg: "#000000" },
+      "AF": { label: "Remark",        bg: "#fcd5b4", fg: "#000000" },
+    };
+    var chDefs = isDark ? customHeaderDefs : customHeaderDefsLight;
+    var chRowBg    = isDark ? "#141414" : "#e8edf5";
+    var chBorder   = isDark ? "#333333" : "#c0c7d8";
+    var chFallbackBg = isDark ? "#1a1a2e" : "#e8edf5";
+    var chFallbackFg = isDark ? "#888888" : "#555555";
+
+    html += '<thead id="xl-custom-header">';
+    html += '<tr style="height:26px;">';
+    for (var chi = 0; chi < cols.length; chi++) {
+      var chCol = cols[chi];
+      if (isCollapsedCol(chCol)) continue;
+      var chCw = colWidths[chCol] || 64;
+      var chDef = chDefs[chCol] || {};
+      var chBg = chDef.bg || chFallbackBg;
+      var chFg = chDef.fg || chFallbackFg;
+      var chLabel = chDef.label || chCol;
+      var chStyle = [
+        "width:" + chCw + "px",
+        "min-width:" + chCw + "px",
+        "background:" + chBg,
+        "color:" + chFg,
+        "font-family:Calibri,Arial,sans-serif",
+        "font-size:10px",
+        "font-weight:700",
+        "text-align:center",
+        "padding:2px 3px",
+        "border:1px solid " + chBorder,
+        "white-space:nowrap",
+        "overflow:hidden",
+        "text-overflow:ellipsis",
+        "letter-spacing:0.02em",
+        "position:sticky",
+        "top:0",
+        "z-index:4",
+      ].join(";");
+      html += '<th style="' + chStyle + '">' + chLabel + '</th>';
     }
     html += '</tr>';
     html += '</thead>';
 
-    // ── TBODY ──
     html += '<tbody>';
     // Green color for Z cell when 100% complete (from Excel CF rule $Z9>=100%)
     
@@ -1340,6 +1436,8 @@ function renderExcelMirror(container, data) {
     for (var r = 1; r <= maxTaskRow; r++) {
       // Skip info rows (1-5) — shown in banner instead
       if (infoRowSet[r]) continue;
+      // Skip Excel header rows 6, 7, 8 — replaced by custom header above
+      if (r === 6 || r === 7 || r === 8) continue;
 
       var rh = rowHeights[String(r)] || 20;
       var isComplete = false;
@@ -1353,9 +1451,8 @@ function renderExcelMirror(container, data) {
       var dataRowIndex = r - infoRows.length;
       var isEvenDataRow = (dataRowIndex % 2 === 0);
 
-      var rowBg = (r === 7 || r === 8) ? "#fcd5b4" : (isEvenDataRow ? xlZebraEven : xlZebraOdd);
+      var rowBg = isEvenDataRow ? xlZebraEven : xlZebraOdd;
       html += '<tr style="height:' + rh + 'px;background:' + rowBg + '">';
-      html += '<td style="position:sticky;left:0;z-index:3;background:' + xlCornerBg + ';color:' + xlRowNumColor + ';text-align:center;font-size:10px;border:1px solid ' + xlBorder + ';min-width:28px;width:28px;user-select:none">' + r + '</td>';
 
       for (var ci3 = 0; ci3 < cols.length; ci3++) {
         var col3  = cols[ci3];
@@ -1429,11 +1526,8 @@ function renderExcelMirror(container, data) {
             var adColor = AD_COLORS[adValue];
             if (adColor) {
                 bgColor = adColor;
-                // Set text color white for dark backgrounds
-                var dark_bgs = ["#5f933c","#0096cc","#005fa3","#2f491e","#6d006d"];
-                if (dark_bgs.indexOf(adColor) !== -1) {
-                    tdStyle.push("color:#ffffff");
-                }
+                // All AD colors have dark backgrounds — always white text
+                tdStyle.push("color:#ffffff");
             }
         } else if (isZComplete) {
             // Z column at 100%: green

@@ -406,6 +406,37 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text1);font-s
 .xl-cell-editable:focus-within{background:rgba(173,214,255,0.15);box-shadow:inset 0 0 0 1px var(--blue);}
 [data-theme="light"] .xl-cell-editable:focus-within{background:#ddeeff;}
 
+/* ── Custom header row (replaces Excel rows 6-8) ─────────────── */
+#xl-custom-header th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 2px solid #2a3a5a !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  transition: background 0.2s, color 0.2s;
+}
+[data-theme="light"] #xl-custom-header th {
+  border-bottom: 2px solid #b0b8cc !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+/* Date / number / text inputs inside the grid — theme-aware */
+[data-theme="dark"] .xl-wrap input[type="date"],
+[data-theme="dark"] .xl-wrap input[type="number"],
+[data-theme="dark"] .xl-wrap input[type="text"],
+[data-theme="dark"] .xl-wrap select {
+  color-scheme: dark;
+}
+[data-theme="light"] .xl-wrap input[type="date"],
+[data-theme="light"] .xl-wrap input[type="number"],
+[data-theme="light"] .xl-wrap input[type="text"],
+[data-theme="light"] .xl-wrap select {
+  color-scheme: light;
+}
+
 /* Phase — plain text like Excel */
 .xl-phase-text{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text2);}
 
@@ -481,4 +512,30 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text1);font-s
 .master-search-wrap .form-input:focus {
   border-color: var(--accent);
   outline: none;
+}
+
+/* Custom scrollbar styling - broader and darker */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg3);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* For Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) var(--bg3);
 }
