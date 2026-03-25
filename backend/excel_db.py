@@ -678,6 +678,7 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     
     return True, f"Updated {updated_count} tasks (Excel syncing in background)"
 
+
 def create_user(name, short_name, username, password, role):
     """Add a new user to users.xlsx."""
     import bcrypt
@@ -902,6 +903,11 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     max_col = min(ws.max_column, max_col)
     cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
 
+     # DEBUG: Print all columns being sent to frontend
+    print(f"DEBUG: Columns being sent to frontend: {cols}")
+    print(f"DEBUG: Does 'R' in cols? {'R' in cols}")
+    print(f"DEBUG: Column index of R: {cols.index('R') if 'R' in cols else 'NOT FOUND'}")
+    
     # ── Merged cells ──────────────────────────────────────────
     merged_map = {}
     for mc in ws.merged_cells.ranges:
@@ -1039,6 +1045,10 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
 
             c = {"v": v}
 
+                        # DEBUG: Check column R
+            if cell.column_letter == "R":
+                print(f"DEBUG: Column R, Row {cell.row}, Value: {v}")
+
             # Merge spans
             if mi.get("master"):
                 if mi["rowspan"] > 1: c["rowspan"] = mi["rowspan"]
@@ -1110,9 +1120,11 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             if col_letter in EDITABLE_COLS:
                 coord = cell.coordinate
                 if coord in cells and not cells[coord].get("skip"):
-                    # AF (remarks) is always editable in task rows regardless of fill
-                    # Other cols require the blue fill color
-                    if col_letter == "AF" or _is_editable_fill(cell):
+                    # Make X, Y, Z always editable (regardless of fill)
+                    # AF is always editable, AD uses separate logic
+                    is_always_editable = col_letter in ["X", "Y", "Z"] or col_letter == "AF"
+                    
+                    if is_always_editable or _is_editable_fill(cell):
                         # For AD column: add department color + only editable if Z < 100
                         if col_letter == "AD":
                             AD_COLORS = {

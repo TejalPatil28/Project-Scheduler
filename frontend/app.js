@@ -459,6 +459,55 @@ function renderMasterList(masterList, projects) {
     return;
   }
 
+  // Store master list globally for filtering
+  window._masterListFull = masterList;
+  window._projectsFull = projects;
+
+  // Build search input + list container
+  var html = [
+    '<div class="master-search-wrap" style="padding: 8px 10px; border-bottom: 1px solid var(--border);">',
+      '<input type="text" id="master-search-input" class="form-input" style="font-size:12px; padding:6px 8px;" placeholder="Search project ID..." autocomplete="off">',
+    '</div>',
+    '<div id="master-list-items" class="master-pane-list"></div>'
+  ].join("");
+
+  el.innerHTML = html;
+
+  // Bind search input event
+  var searchInput = document.getElementById("master-search-input");
+  if (searchInput) {
+    searchInput.addEventListener("input", function(e) {
+      filterMasterList(e.target.value);
+    });
+  }
+
+  // Initial render
+  filterMasterList("");
+}
+
+function filterMasterList(searchTerm) {
+  var masterList = window._masterListFull || [];
+  var projects = window._projectsFull || [];
+  var container = document.getElementById("master-list-items");
+  if (!container) return;
+
+  var term = searchTerm.toLowerCase().trim();
+  
+  var filtered = masterList.filter(function(m) {
+    var pid = m.project_id || "";
+    var fileId = m.file_id || "";
+    return term === "" || pid.toLowerCase().includes(term) || fileId.toLowerCase().includes(term);
+  });
+
+  renderMasterItems(filtered, projects, container);
+}
+
+function renderMasterItems(masterList, projects, container) {
+  if (!masterList.length) {
+    container.innerHTML = '<div class="master-empty">No matching projects</div>';
+    return;
+  }
+
   var projMap = {};
   (projects || []).forEach(function(p) { projMap[p.id] = p; });
 
@@ -470,7 +519,6 @@ function renderMasterList(masterList, projects) {
     var isActive = dashState.activeMasterPid === pid;
     var proj     = projMap[m.file_id || pid];
 
-    // Stale clock icon (right side, added after content div)
     var staleIcon = stale ? '<span title="Not updated in last 2 days" style="font-size:11px;flex-shrink:0;margin-left:auto;padding-left:6px;">\u{1F550}</span>' : '';
 
     var customerName = proj ? h(proj.customer_name || "") : "";
@@ -498,7 +546,7 @@ function renderMasterList(masterList, projects) {
       + '</div>';
   });
 
-  el.innerHTML = html;
+  container.innerHTML = html;
 }
 
 function handleMasterClick(el) {
@@ -924,6 +972,8 @@ function renderExcelMirror(container, data) {
   var rowHeights   = data.row_heights;
   var maxRow       = data.max_row;
   var cols         = data.cols;
+   console.log("All columns in grid:", cols);
+  console.log("Does column R exist in cols?", cols.indexOf("R") !== -1);
   var colGroups    = data.col_groups || [];
   var editableFill = data.editable_fill || null;
   var infoRows     = data.info_rows    || [];
@@ -935,7 +985,46 @@ function renderExcelMirror(container, data) {
   var headerRowSet = {};
   headerRows.forEach(function(r) { headerRowSet[r] = true; });
 
+  // Add these constants
+  var TASK_START_ROW = 9;
+  var TASK_END_ROW = 55;
+
   var AD_OPTIONS = ["Engineering","Purchase","Software","Project Management","Manufacturing","Sales","Client"];
+
+    // ── COLOR CONFIGURATION ─────────────────────────────────
+  // Define all custom background colors for columns/ranges
+  // Add new rules here as needed
+    var colorRules = [
+    { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#d9d9d9" },
+    { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#90b4df" },
+  ];
+    // AD Column color mapping based on dropdown value
+    var AD_COLORS = {
+        "engineering":        "#ffb3b3",
+        "purchase":           "#5f933c",
+        "software":           "#0096cc",
+        "project management": "#005fa3",
+        "manufacturing":      "#2f491e",
+        "sales":              "#00d9d9",
+        "client":             "#6d006d"
+    };
+  
+  // Function to check if a cell should get a custom background color
+  function getCustomBackgroundColor(col, row) {
+    for (var i = 0; i < colorRules.length; i++) {
+      var rule = colorRules[i];
+      // Check if column is in rule's columns list
+      if (rule.columns.indexOf(col) !== -1) {
+        // Check row condition
+        if (rule.rows === "all") {
+          return rule.color;
+        } else if (rule.rows === "9+" && row >= 9) {
+          return rule.color;
+        }
+      }
+    }
+    return null;
+  }
 
   // Build a pending changes map: coord -> new value (staged, not yet saved)
   var _editPending = {};
@@ -1234,9 +1323,21 @@ function renderExcelMirror(container, data) {
     // ── TBODY ──
     html += '<tbody>';
     // Green color for Z cell when 100% complete (from Excel CF rule $Z9>=100%)
-    var greenFill = isDark ? "#4a7a30" : "#92D050";
-
-    for (var r = 1; r <= maxRow; r++) {
+    
+    // Find the last row that has task data (task_code and task_name not empty)
+    // Find the last row that has task data (task_code and task_name not empty)
+    var maxTaskRow = maxRow;
+    for (var r = maxRow; r >= TASK_START_ROW; r--) {
+        var taskCodeCell = cells["H" + r];
+        var taskNameCell = cells["I" + r];
+        var taskCode = taskCodeCell ? taskCodeCell.v : null;
+        var taskName = taskNameCell ? taskNameCell.v : null;
+        if (taskCode && taskName && taskCode.toString().trim() !== "" && taskName.toString().trim() !== "") {
+            maxTaskRow = r;
+            break;
+        }
+    }
+    for (var r = 1; r <= maxTaskRow; r++) {
       // Skip info rows (1-5) — shown in banner instead
       if (infoRowSet[r]) continue;
 
@@ -1261,6 +1362,17 @@ function renderExcelMirror(container, data) {
         var coord = col3 + r;
         var info  = cells[coord];
 
+            // DEBUG: Check column R
+      if (col3 === "R") {
+          console.log("===== COLUMN R DEBUG =====");
+          console.log("Row:", r);
+          console.log("coord:", coord);
+          console.log("info object:", info);
+          console.log("info.v:", info ? info.v : "info is null/undefined");
+          console.log("info.skip:", info ? info.skip : "N/A");
+          console.log("=========================");
+      }
+
         // skip all cols in a collapsed group
         if (isCollapsedCol(col3)) continue;
 
@@ -1279,11 +1391,69 @@ function renderExcelMirror(container, data) {
         ];
         var content = "";
 
+                // ── BACKGROUND COLOR LOGIC ──────────────────────────────
+        // Define AD column colors
+        var AD_COLORS = {
+            "engineering":        "#ffb3b3",
+            "purchase":           "#5f933c",
+            "software":           "#0096cc",
+            "project management": "#005fa3",
+            "manufacturing":      "#2f491e",
+            "sales":              "#00d9d9",
+            "client":             "#6d006d"
+        };
+        
+        // Check if AD column
+        var isADColumn = (col3 === "AD" && r >= 9);
+        
+        // Check if Z column is 100% complete
+        var isZComplete = false;
+        if (col3 === "Z" && r >= 9) {
+            var zCoord = "Z" + r;
+            var zInfo = cells[zCoord];
+            var zVal = zInfo ? String(zInfo.v || "") : "";
+            isZComplete = (zVal === "100%" || zVal === "100");
+        }
+        
+        // Get custom background color from rules (for non-AD columns)
+        var customBg = getCustomBackgroundColor(col3, r);
+        
+        // Determine which background color to apply
+        var bgColor = null;
+        
+        if (isADColumn) {
+            // AD column: use color based on dropdown value
+            var adCoord = "AD" + r;
+            var adInfo = cells[adCoord];
+            var adValue = adInfo ? String(adInfo.v || "").toLowerCase().trim() : "";
+            var adColor = AD_COLORS[adValue];
+            if (adColor) {
+                bgColor = adColor;
+                // Set text color white for dark backgrounds
+                var dark_bgs = ["#5f933c","#0096cc","#005fa3","#2f491e","#6d006d"];
+                if (dark_bgs.indexOf(adColor) !== -1) {
+                    tdStyle.push("color:#ffffff");
+                }
+            }
+        } else if (isZComplete) {
+            // Z column at 100%: green
+            bgColor = "#92d050";
+        } else if (customBg) {
+            // Custom color from rules (E-W, X,Y,Z)
+            bgColor = customBg;
+        } else {
+            // Default row background
+            bgColor = rowBg;
+        }
+        
+        // Apply the background color if we have one
+        if (bgColor) {
+            tdStyle.push("background-color:" + bgColor);
+        }
+        
+        var content = "";
+
         if (info) {
-          if (info.fill) tdStyle.push("background-color:" + info.fill);
-          else tdStyle.push("background-color:" + rowBg);
-          // Z cell: override with green if 100% complete
-          if (col3 === "Z" && isComplete) tdStyle.push("background-color:" + greenFill);
           if (info.font) {
             var f = info.font;
             if (f.bold)      tdStyle.push("font-weight:bold");
@@ -1308,13 +1478,45 @@ function renderExcelMirror(container, data) {
             if (b.top)    tdStyle.push("border-top:"    + borderStyle(b.top));
             if (b.bottom) tdStyle.push("border-bottom:" + borderStyle(b.bottom));
           }
-          if (info.editable && editableFill) {
-            // render as input — override padding so input fills the cell
-            tdStyle.push("padding:0");
-            content = renderInputCell(info, coord, col3, tdStyle);
-          } else if (info.v !== null && info.v !== undefined) {
-            content = h(String(info.v));
-          }
+              // For AD column, determine editability based on Z value (ignore backend editable flag)
+    var isADColumnForEdit = (col3 === "AD" && r >= 9);
+    var canEditAD = true;
+
+    if (isADColumnForEdit && r >= 9) {
+        var zCoord = "Z" + r;
+        var zInfo = cells[zCoord];
+        var zVal = zInfo ? String(zInfo.v || "") : "";
+        var zIsComplete = (zVal === "100%" || zVal === "100");
+        canEditAD = !zIsComplete;  // Only editable if NOT 100%
+        
+        // DEBUG: Log AD column info
+        console.log("========== AD COLUMN DEBUG ==========");
+        console.log("Row:", r);
+        console.log("Z Value from cells:", zVal);
+        console.log("Z Is Complete (100%):", zIsComplete);
+        console.log("Can Edit AD:", canEditAD);
+        console.log("=====================================");
+    }
+
+    // Use frontend-calculated value for AD column, otherwise use backend editable flag
+    var isEditable = isADColumnForEdit ? canEditAD : (info && info.editable);
+
+    // DEBUG: Log the final decision
+    if (isADColumnForEdit) {
+        console.log("FINAL - AD Column Row", r, "isEditable:", isEditable);
+    }
+
+    if (isEditable) {
+        console.log("Rendering INPUT for:", coord, "col:", col3);
+        tdStyle.push("padding:0");
+        content = renderInputCell(info, coord, col3, tdStyle);
+    } else if (info && info.v !== null && info.v !== undefined) {
+        console.log("Rendering TEXT for:", coord, "value:", info.v);
+        content = h(String(info.v));
+    }
+        } else {
+          // No cell info
+          content = "";
         }
 
         var attrs = ' style="' + tdStyle.join(";") + '"';

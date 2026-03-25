@@ -474,6 +474,8 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text1);font-s
   border-radius: var(--radius-sm);
   color: var(--text1);
   font-family: var(--font-body);
+  font-size: 12px;
+  padding: 6px 8px;
 }
 
 .master-search-wrap .form-input:focus {
