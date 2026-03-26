@@ -1162,14 +1162,103 @@ function renderExcelMirror(container, data) {
   bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">PO Value</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(lp_po_value) + '</div></div>';
   bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">SW Efforts</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(lp_sw_efforts) + '</div></div>';
   bannerHtml +=       '</div>';
-  if (ldHasData) {
-    bannerHtml +=     '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 20px;flex-shrink:0;gap:6px;margin-left:auto;border-left:1px solid ' + bDivider + ';">';
-    if (banner.ld_date_val)    bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_date_lbl||"LD Date") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_date_val) + '</div></div>';
-    if (banner.ld_maxwk_val)   bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_maxwk_lbl||"LD Max/Wk") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_maxwk_val) + '</div></div>';
-    if (banner.ld_maxov_val)   bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_maxov_lbl||"LD Max/OV") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_maxov_val) + '</div></div>';
-    if (banner.ld_remarks_val) bannerHtml += '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_remarks_lbl||"LD Remarks") + '</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(banner.ld_remarks_val) + '</div></div>';
-    bannerHtml +=     '</div>';
+   
+    
+
+    // LD Section
+  var ldChecked = !!(banner.ld_date_val);  // Check if LD date exists
+  
+  if (ldChecked) {
+    // Container for LD SECTION (left side)
+    bannerHtml += '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 16px;flex-shrink:0;border-left:1px solid ' + bDivider + ';">';
+    
+    // Row 1: Checkbox only
+    bannerHtml += '<div style="display:flex;align-items:center;margin-bottom:6px;">';
+    bannerHtml += '<div style="display:flex;align-items:center;gap:6px;">';
+    bannerHtml += '<input type="checkbox" id="ld-checkbox" checked disabled style="width:14px;height:14px;cursor:default;opacity:0.7;">';
+    bannerHtml += '<span style="' + bFont + 'font-size:11px;font-weight:600;color:' + bLabel + ';">LD Applicable</span>';
+    bannerHtml += '</div>';
+    bannerHtml += '</div>';
+    
+    // LD Date (formatted) + Button in the same row
+    var ldDateFormatted = '';
+    if (banner.ld_date_val) {
+        var dateStr = banner.ld_date_val;
+        var dateParts = dateStr.split(' ')[0].split('-');
+        if (dateParts.length === 3) {
+            var year = dateParts[0];
+            var month = dateParts[1];
+            var day = dateParts[2];
+            var monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            var monthName = monthNames[parseInt(month) - 1];
+            ldDateFormatted = parseInt(day) + ' ' + monthName + ' ' + year;
+        } else {
+            ldDateFormatted = dateStr;
+        }
+    }
+    
+    bannerHtml += '<div style="display:flex;align-items:center;gap:10px;">';
+    bannerHtml += '<div style="' + bFont + 'font-size:12px;font-weight:500;color:' + bValue + ';">' + h(ldDateFormatted) + '</div>';
+    bannerHtml += '<button id="ld-toggle-btn" style="background:transparent;border:none;cursor:pointer;font-size:14px;color:' + bLabel + ';padding:2px 6px;">→</button>';
+    bannerHtml += '</div>';
+    
+    bannerHtml += '</div>'; // End LD SECTION container
+    
+    // DETAILS SECTION container (initially hidden)
+    bannerHtml += '<div id="ld-additional-details" style="display:none;align-items:flex-start;padding:0 16px;flex-shrink:0;">';
+    bannerHtml += '<div style="display:flex;gap:24px;">';
+    
+        // Left column: Max/Wk and Max/OV (stacked vertically) - convert to percentages
+    function formatPercentage(val) {
+        if (val === undefined || val === null) return '';
+        var num = parseFloat(val);
+        if (isNaN(num)) return val;
+        // Convert decimal to percentage (0.005 -> 0.5%)
+        if (num >= 0 && num <= 1) {
+            return (num * 100) + '%';
+        }
+        // Already a number like 5 -> 5%
+        return num + '%';
+    }
+    
+    var maxwkDisplay = formatPercentage(banner.ld_maxwk_val);
+    var maxovDisplay = formatPercentage(banner.ld_maxov_val);
+    
+    bannerHtml += '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">';
+    if (banner.ld_maxwk_val)   bannerHtml += '<div style="display:flex;align-items:center;gap:6px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';">' + (banner.ld_maxwk_lbl||"LD Max/Wk") + '</div><div style="' + bFont + 'font-size:12px;font-weight:500;color:' + bValue + ';">' + h(maxwkDisplay) + '</div></div>';
+    if (banner.ld_maxov_val)   bannerHtml += '<div style="display:flex;align-items:center;gap:6px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';">' + (banner.ld_maxov_lbl||"LD Max/OV") + '</div><div style="' + bFont + 'font-size:12px;font-weight:500;color:' + bValue + ';">' + h(maxovDisplay) + '</div></div>';
+    bannerHtml += '</div>';
+    
+    // Right column: Remarks (with word wrapping)
+    if (banner.ld_remarks_val) {
+      bannerHtml += '<div style="display:flex;flex-direction:column;gap:6px;max-width:250px;margin-top:9px;">';
+            // Convert remarks value to percentage if it's a number
+      var remarksValue = banner.ld_remarks_val;
+      var displayValue = remarksValue;
+      
+      // Check if it's a decimal number between 0 and 1 (like 0.005 = 0.5%)
+      if (typeof remarksValue === 'number' || !isNaN(parseFloat(remarksValue))) {
+        var num = parseFloat(remarksValue);
+        if (num >= 0 && num <= 1) {
+          // Convert decimal to percentage (0.005 -> 0.5%)
+          displayValue = (num * 100) + '%';
+        } else if (num > 1 && num <= 100) {
+          // Already a percentage number (5 -> 5%)
+          displayValue = num + '%';
+        }
+      }
+
+      bannerHtml += '<div style="display:flex;align-items:flex-start;gap:6px;">';
+      bannerHtml += '<div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">' + (banner.ld_remarks_lbl||"LD Remarks") + '</div>';
+      bannerHtml += '<div style="' + bFont + 'font-size:12px;font-weight:500;color:' + bValue + ';word-wrap:break-word;white-space:normal;line-height:1.4;max-width:500px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">' + h(displayValue) + '</div>';
+      bannerHtml += '</div>';
+      bannerHtml += '</div>';
+    }
+    
+    bannerHtml += '</div>'; // End inner flex
+    bannerHtml += '</div>'; // End DETAILS SECTION container
   }
+  
   bannerHtml +=   '</div>';
   bannerHtml += '</div>';
   var xlCellBg   = isDark ? "#1e1e1e" : "#ffffff";
@@ -1666,6 +1755,23 @@ function renderExcelMirror(container, data) {
       html += '</tr>';
     }
     html += '</tbody></table></div></div></div>';
+
+      // Add click handler for LD toggle button (will run after HTML is rendered)
+    setTimeout(function() {
+      var toggleBtn = document.getElementById("ld-toggle-btn");
+      var detailsDiv = document.getElementById("ld-additional-details");
+      if (toggleBtn && detailsDiv) {
+        toggleBtn.addEventListener("click", function() {
+          if (detailsDiv.style.display === "none") {
+            detailsDiv.style.display = "block";
+            toggleBtn.textContent = "←";
+          } else {
+            detailsDiv.style.display = "none";
+            toggleBtn.textContent = "→";
+          }
+        });
+      }
+    }, 100);
     container.innerHTML = html;
   }
 
