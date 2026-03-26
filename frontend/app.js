@@ -984,13 +984,17 @@ async function loadSheetView() {
 }
 
 function renderExcelMirror(container, data) {
+  // Detect dark mode first — used throughout this function
+  var isDark = document.documentElement.getAttribute("data-theme") !== "light";
+
   var cells        = data.cells;
   var colWidths    = data.col_widths;
   var rowHeights   = data.row_heights;
   var maxRow       = data.max_row;
   var cols         = data.cols;
-   console.log("All columns in grid:", cols);
+  console.log("All columns in grid:", cols);
   console.log("Does column R exist in cols?", cols.indexOf("R") !== -1);
+  console.log("Index of R:", cols.indexOf("R"));
   var colGroups    = data.col_groups || [];
   var editableFill = data.editable_fill || null;
   var infoRows     = data.info_rows    || [];
@@ -1012,14 +1016,22 @@ function renderExcelMirror(container, data) {
   // Define all custom background colors for columns/ranges
   // Add new rules here as needed
     var colorRules = isDark ? [
-      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#232a2e" },
-      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#1a2a3a" },
+      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#2a2a2a" },
+      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#152030" },
     ] : [
       { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#d9d9d9" },
       { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#90b4df" },
     ];
     // AD Column color mapping based on dropdown value
-    var AD_COLORS = {
+    var AD_COLORS = isDark ? {
+        "engineering":        "#3d1a1a",
+        "purchase":           "#1a2e14",
+        "software":           "#0e2233",
+        "project management": "#0a1a30",
+        "manufacturing":      "#1a2a14",
+        "sales":              "#003333",
+        "client":             "#2a0a2a"
+    } : {
         "engineering":        "#ffb3b3",
         "purchase":           "#5f933c",
         "software":           "#0096cc",
@@ -1108,8 +1120,6 @@ function renderExcelMirror(container, data) {
     return w + " solid " + c;
   }
 
-  // Detect dark mode
-  var isDark = document.documentElement.getAttribute("data-theme") !== "light";
   var xlBg         = isDark ? "#1a1a1a" : "#ffffff";
   var xlZebraOdd  = isDark ? "#1a1a1a" : "#ffffff";
   var xlZebraEven = isDark ? "#1f1f1f" : "#f7f9fc";
@@ -1246,8 +1256,10 @@ function renderExcelMirror(container, data) {
     (leftPanel.dates || []).forEach(function(item) {
       var pmBg  = (item.pm_fill  && item.pm_fill  !== "#FFFFFF") ? item.pm_fill  : "transparent";
       var swBg  = (item.swe_fill && item.swe_fill !== "#FFFFFF") ? item.swe_fill : "transparent";
-      var pmFg  = item.pm_font  || lpValue;
-      var swFg  = item.swe_font || lpValue;
+      
+      // In dark mode, force light text color; in light mode, use Excel font or default
+      var pmFg = isDark ? "#c2bfbf" : (item.pm_font || lpValue);
+      var swFg = isDark ? "#c2bfbf" : (item.swe_font || lpValue);
       var pmVal  = item.pm  || item.value || "—";
       var sweVal = item.swe || "—";
       leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
@@ -1336,32 +1348,32 @@ function renderExcelMirror(container, data) {
     // Defines semantic column headers for the task grid
     var customHeaderDefs = {
       // col letter -> label, and optional bg/text overrides
-      "E":  { label: "Buffer Time",         bg: "#fcd5b4", fg: "#000000" },
-      "F":  { label: "PH",           bg: "#fcd5b4", fg: "#000000" },
-      "G":  { label: "TFO",       bg: "#fcd5b4", fg: "#000000" },
-      "H":  { label: "Phase ID",     bg: "#fcd5b4", fg: "#000000" },
-      "I":  { label: "Task Description",     bg: "#fcd5b4", fg: "#000000" },
-      "J":  { label: "P1 Start Date",         bg: "#fcd5b4", fg: "#000000" },
-      "K":  { label: "P1 End Date",          bg: "#fcd5b4", fg: "#000000" },
-      "L":  { label: "P2 Start Date",   bg: "#fcd5b4", fg: "#000000" },
-      "M":  { label: "P2 End Date",           bg: "#fcd5b4", fg: "#000000" },
-      "N":  { label: "P3 Start Date",     bg: "#fcd5b4", fg: "#000000" },
-      "O":  { label: "P3 End Date",       bg: "#fcd5b4", fg: "#000000" },
-      "P":  { label: "Org Plan Date",       bg: "#fcd5b4", fg: "#000000" },
-      "Q":  { label: "Org End Date",        bg: "#fcd5b4", fg: "#000000" },
-      "R":  { label: "Ref. Lead Time",       bg: "#fcd5b4", fg: "#000000" },
-      "S":  { label: "Lead Time",       bg: "#fcd5b4", fg: "#000000" },
-      "T":  { label: "Intlk",         bg: "#fcd5b4", fg: "#000000" },
-      "U":  { label: "Effort Days",         bg: "#fcd5b4", fg: "#000000" },
-      "V":  { label: "Cur. Start Date",        bg: "#fcd5b4", fg: "#000000" },
-      "W":  { label: "Cur. End Date",     bg: "#fcd5b4", fg: "#000000" },
-      "X":  { label: "Act. Start Date",    bg: "#fcd5b4", fg: "#000000" },
-      "Y":  { label: "Act. End Date",      bg: "#fcd5b4", fg: "#000000" },
-      "Z":  { label: "% Complete",        bg: "#fcd5b4", fg: "#000000" },
-      "AA": { label: "Exptd % Completion",      bg: "#fcd5b4", fg: "#000000" },
-      "AB": { label: "Alert Date for 80%",        bg: "#fcd5b4", fg: "#000000" },
-      "AD": { label: "Help Req. from",     bg: "#fcd5b4", fg: "#000000" },
-      "AF": { label: "Remark",        bg: "#fcd5b4", fg: "#000000" },
+      "E":  { label: "Buffer Time",         bg: "#2a2010", fg: "#d4a96a" },
+      "F":  { label: "PH",           bg: "#2a2010", fg: "#d4a96a" },
+      "G":  { label: "TFO",       bg: "#2a2010", fg: "#d4a96a" },
+      "H":  { label: "Phase ID",     bg: "#2a2010", fg: "#d4a96a" },
+      "I":  { label: "Task Description",     bg: "#2a2010", fg: "#d4a96a" },
+      "J":  { label: "P1 Start Date",         bg: "#2a2010", fg: "#d4a96a" },
+      "K":  { label: "P1 End Date",          bg: "#2a2010", fg: "#d4a96a" },
+      "L":  { label: "P2 Start Date",   bg: "#2a2010", fg: "#d4a96a" },
+      "M":  { label: "P2 End Date",           bg: "#2a2010", fg: "#d4a96a" },
+      "N":  { label: "P3 Start Date",     bg: "#2a2010", fg: "#d4a96a" },
+      "O":  { label: "P3 End Date",       bg: "#2a2010", fg: "#d4a96a" },
+      "P":  { label: "Org Plan Date",       bg: "#2a2010", fg: "#d4a96a" },
+      "Q":  { label: "Org End Date",        bg: "#2a2010", fg: "#d4a96a" },
+      "R":  { label: "Ref. Lead Time",       bg: "#2a2010", fg: "#d4a96a" },
+      "S":  { label: "Lead Time",       bg: "#2a2010", fg: "#d4a96a" },
+      "T":  { label: "Intlk",         bg: "#2a2010", fg: "#d4a96a" },
+      "U":  { label: "Effort Days",         bg: "#2a2010", fg: "#d4a96a" },
+      "V":  { label: "Cur. Start Date",        bg: "#2a2010", fg: "#d4a96a" },
+      "W":  { label: "Cur. End Date",     bg: "#2a2010", fg: "#d4a96a" },
+      "X":  { label: "Act. Start Date",    bg: "#2a2010", fg: "#d4a96a" },
+      "Y":  { label: "Act. End Date",      bg: "#2a2010", fg: "#d4a96a" },
+      "Z":  { label: "% Complete",        bg: "#2a2010", fg: "#d4a96a" },
+      "AA": { label: "Exptd % Completion",      bg: "#2a2010", fg: "#d4a96a" },
+      "AB": { label: "Alert Date for 80%",        bg: "#2a2010", fg: "#d4a96a" },
+      "AD": { label: "Help Req. from",     bg: "#2a2010", fg: "#d4a96a" },
+      "AF": { label: "Remark",        bg: "#2a2010", fg: "#d4a96a" },
     };
     // Light mode overrides
     var customHeaderDefsLight = {
@@ -1454,6 +1466,12 @@ function renderExcelMirror(container, data) {
       // Skip Excel header rows 6, 7, 8 — replaced by custom header above
       if (r === 6 || r === 7 || r === 8) continue;
 
+        // ADD THIS DEBUG
+      if (r >= 9 && r <= 16) {
+          console.log("=== Processing Row", r, "===");
+          console.log("Columns for this row:", cols);
+      }
+
       var rh = rowHeights[String(r)] || 20;
       var isComplete = false;
       var zCoord = "Z" + r;
@@ -1470,21 +1488,36 @@ function renderExcelMirror(container, data) {
       html += '<tr style="height:' + rh + 'px;background:' + rowBg + '">';
 
       for (var ci3 = 0; ci3 < cols.length; ci3++) {
+         // ADD THIS DEBUG
+        if (col3 === "R" && r >= 9 && r <= 16) {
+            console.log("Found column R at row", r);
+        }
+
         var col3  = cols[ci3];
+
+        if (col3 === "R") console.log("Column R found at row", r, "value:", cells[col3 + r] ? cells[col3 + r].v : "null");
         var coord = col3 + r;
         var info  = cells[coord];
 
             // DEBUG: Check column R
-      if (col3 === "R") {
-          console.log("===== COLUMN R DEBUG =====");
-          console.log("Row:", r);
-          console.log("coord:", coord);
-          console.log("info object:", info);
-          console.log("info.v:", info ? info.v : "info is null/undefined");
-          console.log("info.skip:", info ? info.skip : "N/A");
-          console.log("=========================");
+      if (col3 === "R" && r >= 9 && r <= 16) {
+          console.log("Column R, Row", r);
+          console.log("  isCollapsedCol?", isCollapsedCol(col3));
+          console.log("  info object:", info);
+          console.log("  info.v:", info ? info.v : "no info");
       }
 
+              // Check if column R is in a collapsed group
+        if (col3 === "R" && r >= 9 && r <= 16) {
+            var gi = colToGroup["R"];
+            if (gi !== undefined) {
+                console.log("  Group index:", gi);
+                console.log("  Group collapsed state:", collapseState[gi]);
+                console.log("  Group columns:", colGroups[gi] ? colGroups[gi].cols : "no group");
+            } else {
+                console.log("  Not in any group");
+            }
+        }
         // skip all cols in a collapsed group
         if (isCollapsedCol(col3)) continue;
 
@@ -1504,16 +1537,7 @@ function renderExcelMirror(container, data) {
         var content = "";
 
                 // ── BACKGROUND COLOR LOGIC ──────────────────────────────
-        // Define AD column colors
-        var AD_COLORS = {
-            "engineering":        "#ffb3b3",
-            "purchase":           "#5f933c",
-            "software":           "#0096cc",
-            "project management": "#005fa3",
-            "manufacturing":      "#2f491e",
-            "sales":              "#00d9d9",
-            "client":             "#6d006d"
-        };
+        // AD_COLORS defined above (isDark-aware)
         
         // Check if AD column
         var isADColumn = (col3 === "AD" && r >= 9);
@@ -1540,16 +1564,22 @@ function renderExcelMirror(container, data) {
             var adValue = adInfo ? String(adInfo.v || "").toLowerCase().trim() : "";
             var adColor = AD_COLORS[adValue];
             if (adColor) {
+                var AD_FG = isDark ? {
+                    "engineering": "#f87171", "purchase": "#86efac",
+                    "software": "#60a5fa", "project management": "#93c5fd",
+                    "manufacturing": "#a3e635", "sales": "#2dd4bf", "client": "#d8b4fe"
+                } : {};
                 bgColor = adColor;
-                // All AD colors have dark backgrounds — always white text
-                tdStyle.push("color:#ffffff");
+                tdStyle.push("color:" + (AD_FG[adValue] || "#ffffff"));
             }
         } else if (isZComplete) {
             // Z column at 100%: green
-            bgColor = "#92d050";
+            bgColor = isDark ? "#1a3a1a" : "#92d050";
+            if (isDark) tdStyle.push("color:#4ade80");
         } else if (customBg) {
             // Custom color from rules (E-W, X,Y,Z)
             bgColor = customBg;
+            if (isDark) tdStyle.push("color:#ffffff");
         } else {
             // Default row background
             bgColor = rowBg;

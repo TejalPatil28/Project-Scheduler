@@ -3,6 +3,17 @@ import openpyxl
 from datetime import datetime, date
 import threading
 import queue
+from openpyxl.utils import get_column_letter as gcl
+import pycel
+from pycel.excelcompiler import ExcelCompiler
+
+try:
+    from pycel.excelcompiler import ExcelCompiler
+    PY_CEL_AVAILABLE = True
+    print("PyCel is available for formula evaluation")
+except ImportError:
+    PY_CEL_AVAILABLE = False
+    print("PyCel not installed, falling back to openpyxl only")
 
 
 # ── Paths ──────────────────────────────────────────────────────
@@ -886,6 +897,7 @@ def _resolve_color(color_obj):
 
 def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     """Read cell values + basic formatting. Uses JSON sidecar cache for speed."""
+    from openpyxl.utils import get_column_letter as gcl
 
     # Check JSON sidecar cache first
     project_id = os.path.splitext(os.path.basename(filepath))[0]
@@ -893,13 +905,26 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     if cached is not None:
         return cached
 
-    wb = openpyxl.load_workbook(filepath, data_only=True)
+    # Load workbook with openpyxl for structure, formatting, and non-formula cells
+    wb = openpyxl.load_workbook(filepath, data_only=False)  # Load with formulas
     ws = wb.active
     max_row = ws.max_row
     max_col = min(ws.max_column, max_col)
     cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
 
-     # DEBUG: Print all columns being sent to frontend
+    # Initialize PyCel for formula evaluation
+    excel_compiler = None
+    if PY_CEL_AVAILABLE:
+        try:
+            excel_compiler = ExcelCompiler(filepath)
+            print("PyCel initialized for formula evaluation")
+        except Exception as e:
+            print(f"PyCel initialization failed: {e}, falling back to openpyxl only")
+            excel_compiler = None
+    else:
+        print("PyCel not available, using openpyxl only")
+
+    # DEBUG: Print all columns being sent to frontend
     print(f"DEBUG: Columns being sent to frontend: {cols}")
     print(f"DEBUG: Does 'R' in cols? {'R' in cols}")
     print(f"DEBUG: Column index of R: {cols.index('R') if 'R' in cols else 'NOT FOUND'}")
@@ -919,26 +944,20 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                     merged_map[coord] = {"skip": True}
 
     # ── Column widths + hidden flags ─────────────────────────
-    # A column is "grouped/hidden" if:
-    #   (a) it has outline_level > 0 and hidden=True, OR
-    #   (b) it has no dimension entry (uses sheet default width ~0.88) meaning
-    #       Excel collapsed it by making it near-zero width
     DEFAULT_COL_WIDTH = getattr(ws.sheet_format, 'defaultColWidth', None) or 0.88
     col_widths  = {}
-    col_hidden  = {}   # True if this col is part of a collapsed group
+    col_hidden  = {}
     col_outline = {}
 
     for col in cols:
         try:
             cd = ws.column_dimensions.get(col)
             if cd is None:
-                # No explicit dimension — uses sheet default (near-zero = collapsed group member)
                 col_widths[col]  = max(30, round((DEFAULT_COL_WIDTH or 8) * 7.5))
                 col_hidden[col]  = DEFAULT_COL_WIDTH < 2.0
                 col_outline[col] = 0
             else:
                 col_widths[col]  = max(30, round((cd.width or 8) * 7.5))
-                # Only count as group-hidden if outline_level > 0 (not plain hidden cols)
                 col_hidden[col]  = bool(cd.hidden) and int(cd.outline_level or 0) > 0
                 col_outline[col] = int(cd.outline_level or 0)
         except Exception:
@@ -953,17 +972,11 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             col_widths[_col] = max(30, round(col_widths[_col] * _factor))
 
     # ── Build col_groups ──────────────────────────────────────
-    # A group is a run of consecutive hidden/near-zero cols bounded by a
-    # visible col that has outline_level > 0 (the group "anchor").
-    # Strategy: find cols that are hidden or have outline_level>0, group
-    # consecutive ones together.
     col_groups = []
     try:
         i = 0
         while i < len(cols):
             col = cols[i]
-            # A col belongs to a group if it has outline_level>0, OR it has no
-            # dimension entry (tiny default width) meaning it was collapsed inline
             cd_check = ws.column_dimensions.get(col)
             is_grouped = (
                 col_outline.get(col, 0) > 0 or
@@ -984,14 +997,9 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                         j += 1
                     else:
                         break
-                # If group starts at J, trim to stop at P (exclude Q)
                 if group_cols[0] == "J" and "Q" in group_cols:
                     group_cols = group_cols[:group_cols.index("Q")]
-
-                # If group starts at X, extend to include AB explicitly
-                # (AB has outline=0 in Excel but logically belongs to this group)
                 if group_cols[0] == "X" and "AB" in cols and "AB" not in group_cols:
-                    # Add any missing cols between last group col and AB
                     from openpyxl.utils import column_index_from_string as col2idx
                     last_idx = col2idx(group_cols[-1])
                     ab_idx   = col2idx("AB")
@@ -1018,6 +1026,10 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
 
     # ── Cells ─────────────────────────────────────────────────
     cells = {}
+    
+    # Pre-calculate sheet name for PyCel
+    sheet_name = ws.title
+    
     for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
         for cell in row:
             coord = cell.coordinate
@@ -1027,21 +1039,78 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                 cells[coord] = {"skip": True}
                 continue
 
-            # Value
-            v = cell.value
-            if isinstance(v, (datetime, date)):
-                if isinstance(v, datetime): v = v.date()
-                v = v.strftime("%d-%b-%y")
-            elif isinstance(v, (int, float)) and not isinstance(v, bool):
-                fmt = cell.number_format or ""
-                if "%" in fmt:
-                    v = f"{int(round(float(v) * 100))}%"
-            elif v is not None:
-                v = str(v) if not isinstance(v, (int, str, bool)) else v
+            # Get value using PyCel for formulas, openpyxl for static values
+            v = None
+            if excel_compiler and cell.data_type == 'f':  # Cell contains a formula
+                try:
+                    # Use PyCel to evaluate the formula
+                    cell_ref = f"{sheet_name}!{coord}"
+                    v = excel_compiler.evaluate(cell_ref)
+
+                    # DEBUG for column AA
+                    if cell.column_letter == "AA" and cell.row >= 9:
+                        print(f"DEBUG AA: {coord} raw value: {v}, format: {cell.number_format}")
+                    
+                     # Handle date values
+                    fmt = cell.number_format or ""
+                    
+                    # Check if the value is a date serial number (Excel stores dates as numbers)
+                    if isinstance(v, (int, float)) and v > 1 and any(pattern in fmt.lower() for pattern in ['yy', 'mm', 'dd', 'mmm']):
+                        # Convert Excel date serial to proper date
+                        try:
+                            from openpyxl.utils.datetime import from_excel
+                            date_val = from_excel(v)
+                            v = date_val.strftime("%d-%b-%y")
+                        except Exception:
+                            pass
+                    elif isinstance(v, (datetime, date)):
+                        if isinstance(v, datetime):
+                            v = v.date()
+                        v = v.strftime("%d-%b-%y")
+
+                    elif isinstance(v, (int, float)):
+                        if "%" in fmt:
+                            v = f"{int(round(float(v) * 100))}%"
+                            print(f"DEBUG AA: converted to: {v}")
+
+
+                except Exception as e:
+                    print(f"PyCel evaluation failed for {coord}: {e}, falling back to openpyxl")
+                    # Fall back to openpyxl's value (might be None)
+                    v = cell.value
+                    if isinstance(v, (datetime, date)):
+                        if isinstance(v, datetime): v = v.date()
+                        v = v.strftime("%d-%b-%y")
+            else:
+                # Static value - use openpyxl
+                v = cell.value
+                # DEBUG for column AA
+                if cell.column_letter == "AA" and cell.row >= 9:
+                    print(f"DEBUG AA static: {coord} value: {v}, format: {cell.number_format}")
+                
+                if isinstance(v, (datetime, date)):
+                    if isinstance(v, datetime): v = v.date()
+                    v = v.strftime("%d-%b-%y")
+                elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                    fmt = cell.number_format or ""
+                    if "%" in fmt:
+                        v = f"{int(round(float(v) * 100))}%"
+                    elif fmt == "00":
+                        v = f"{int(v):02d}"
+                    elif fmt == "0.0":
+                        v = f"{float(v):.1f}"
+                    elif fmt == "0.00":
+                        v = f"{float(v):.2f}"
+                elif v is not None:
+                    v = str(v) if not isinstance(v, (int, str, bool)) else v
 
             c = {"v": v}
 
-                        # DEBUG: Check column R
+             # DEBUG: Check what's being stored for column R
+            if cell.column_letter == "R" and cell.row >= 9 and cell.row <= 16:
+                print(f"DEBUG STORE: {coord} stored value: {v}")
+
+            # DEBUG: Check column R
             if cell.column_letter == "R":
                 print(f"DEBUG: Column R, Row {cell.row}, Value: {v}")
 
@@ -1050,7 +1119,7 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                 if mi["rowspan"] > 1: c["rowspan"] = mi["rowspan"]
                 if mi["colspan"] > 1: c["colspan"] = mi["colspan"]
 
-            # Font — bold and size only (skip color/italic/underline)
+            # Font — bold and size only
             try:
                 f = cell.font
                 font = {}
@@ -1070,6 +1139,10 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                 pass
 
             cells[coord] = c
+
+    # ... Continue with the rest of your existing get_raw_sheet() code
+    # (editable cells detection, project_banner, left_panel, etc.)
+    # Keep everything from here unchanged
 
     # ── Detect and mark editable cells ───────────────────────
     # Read the fill fingerprint from cell X at TASK_START_ROW — that is the
@@ -1166,12 +1239,37 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         return str(v).strip() if v else ""
 
     def _date(ref):
-        v = ws[ref].value
-        if v is None: return ""
+        cell = ws[ref]
+        v = cell.value
+        print(f"DEBUG _date: {ref} raw value: {v}, data_type: {cell.data_type}")
+        
+        if v is None:
+            return ""
+        
+        # If it's a formula, try to get the calculated value
+        if cell.data_type == 'f' and excel_compiler:
+            try:
+                cell_ref = f"{sheet_name}!{ref}"
+                v = excel_compiler.evaluate(cell_ref)
+                print(f"DEBUG _date: {ref} evaluated to: {v}")
+            except Exception as e:
+                print(f"DEBUG _date: {ref} evaluation failed: {e}")
+        
+        # Convert Excel date serial number to date string
+        if isinstance(v, (int, float)):
+            # Check if this is a date serial number (Excel dates are numbers > 1)
+            if v > 1:
+                try:
+                    from openpyxl.utils.datetime import from_excel
+                    date_val = from_excel(v)
+                    v = date_val.strftime("%d %b %Y")
+                except Exception:
+                    pass
+        
         if isinstance(v, (datetime, date)):
             d = v.date() if isinstance(v, datetime) else v
             return d.strftime("%d %b %Y")
-        return str(v).strip()
+        return str(v).strip() if v else ""
 
     # W2 may be empty — fall back to X9 (first task actual start date)
     w2_val = _date("W2") or _date("X9")
@@ -1195,6 +1293,15 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         "ld_remarks_lbl": _v("AE4"),
         "ld_remarks_val": _v("AF4"),
     }
+
+     # DEBUG: Test _date function for SWE cells
+    print("=== DEBUG: SWE DATE CELL VALUES ===")
+    for row_num in [28, 29, 30, 31, 32, 33]:
+        swe_cell = ws[f"D{row_num}"]
+        print(f"D{row_num}: raw value = {swe_cell.value}, data_type = {swe_cell.data_type}")
+        swe_value = _date(f"D{row_num}")
+        print(f"  _date(D{row_num}) returned: {swe_value}")
+    print("==================================")
 
     # Vertical left panel data
     left_panel = {
