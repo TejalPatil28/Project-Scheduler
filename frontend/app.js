@@ -357,30 +357,31 @@ async function renderDashboard() {
 }
 
 async function switchToMonitor() {
-  setNavBtn("monitor");
-  setTopbar(null, false);
-  var sidebar = document.getElementById("master-sidebar");
-  if (sidebar) sidebar.style.display = "none";
-  var pg = document.getElementById("page-content");
-  if (pg) pg.classList.add("no-pad");
-  var page = document.getElementById("page-content");
-  page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading monitor...</div>';
-  try {
-    var data = await API.req("GET", "/monitor/sheet");
-    if (!data || data.error) {
-      page.innerHTML = '<div class="empty" style="padding-top:80px"><div class="empty-icon">&#9906;</div><div class="empty-text">No monitoring file found for your account.</div></div>';
-      return;
+    setNavBtn("monitor");
+    setTopbar(null, false);
+    var sidebar = document.getElementById("master-sidebar");
+    if (sidebar) sidebar.style.display = "none";
+    var pg = document.getElementById("page-content");
+    if (pg) pg.classList.add("no-pad");
+    var page = document.getElementById("page-content");
+    page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading monitor...</div>';
+    try {
+        var data = await API.req("GET", "/monitor/sheet");
+        if (!data || data.error) {
+            page.innerHTML = '<div class="empty" style="padding-top:80px"><div class="empty-icon">&#9906;</div><div class="empty-text">No monitoring file found for your account.</div></div>';
+            return;
+        }
+        var wrap = document.createElement("div");
+        wrap.id = "monitor-grid";
+        wrap.style.flex = "1";
+        wrap.style.minHeight = "0";
+        wrap.style.overflow = "auto";
+        page.innerHTML = "";
+        page.appendChild(wrap);
+        renderMonitor(wrap, data);
+    } catch(err) {
+        page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
     }
-    var wrap = document.createElement("div");
-    wrap.id = "xl-grid";
-    wrap.style.flex = "1";
-    wrap.style.minHeight = "0";
-    page.innerHTML = "";
-    page.appendChild(wrap);
-    renderExcelMirror(wrap, data);
-  } catch(err) {
-    page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
-  }
 }
 
 function switchToProjects() {
@@ -1041,6 +1042,82 @@ function renderExcelMirror(container, data) {
         "client":             "#6d006d"
     };
   
+        // ── TEXT RULES CONFIGURATION ─────────────────────────────────
+    // Define text color rules based on cell comparisons
+    var textRules = [
+        { 
+            name: "Lead Time mismatch", 
+            column: "S",           // Column to apply text color to
+            condition: "not_equal", 
+            compare_with: "R",     // Compare with this column
+            rows: "9+",            // Apply to rows 9 and above
+            color: "var(--red)"    // Text color when condition is true
+        },
+        {
+            name: "Progress behind plan",
+            column: "Z",
+            condition: "less_than",
+            compare_with: "AA",
+            rows: "9+",
+            color: "var(--red)"
+        },
+    ];
+    
+    // Function to check if a text rule applies to a cell
+  function getTextRuleColor(col, row, cells) {
+        for (var i = 0; i < textRules.length; i++) {
+            var rule = textRules[i];
+            if (rule.column !== col) continue;
+            if (rule.rows === "9+" && row < 9) continue;
+            if (rule.rows === "all" || rule.rows === "9+") {
+
+                if (rule.condition === "not_equal" && rule.compare_with) {
+                    var currentVal = cells[rule.column + row] ? String(cells[rule.column + row].v || "") : "";
+                    var compareVal = cells[rule.compare_with + row] ? String(cells[rule.compare_with + row].v || "") : "";
+                    var normCurrent = normalizeValue(currentVal);
+                    var normCompare = normalizeValue(compareVal);
+                    if (normCurrent === "" && typeof normCompare === "number") normCurrent = 0;
+                    if (normCompare === "" && typeof normCurrent === "number") normCompare = 0;
+                    if (normCurrent !== normCompare) {
+                        return rule.color;
+                    }
+                }
+
+                if (rule.condition === "less_than" && rule.compare_with) {
+                    var currentVal = cells[rule.column + row] ? String(cells[rule.column + row].v || "") : "";
+                    var compareVal = cells[rule.compare_with + row] ? String(cells[rule.compare_with + row].v || "") : "";
+                    var numCurrent = parseFloat(currentVal.replace("%", "").trim());
+                    var numCompare = parseFloat(compareVal.replace("%", "").trim());
+                    if (!isNaN(numCurrent) && !isNaN(numCompare) && numCurrent < numCompare) {
+                        return rule.color;
+                    }
+                }
+
+            }
+        }
+        return null;
+    }
+
+    // Helper function to normalize values for comparison
+    function normalizeValue(val) {
+        if (val === null || val === undefined || val === "") return "";
+        
+        var str = String(val).trim();
+        
+        // Check if it's a number (with possible leading zeros like "02", "2.0", etc.)
+        var num = parseFloat(str);
+        if (!isNaN(num) && isFinite(num)) {
+            // If it's a whole number, compare as number
+            if (num === Math.floor(num)) {
+                return num;
+            }
+            return num;
+        }
+        
+        // Not a number, return as string
+        return str;
+    }
+
   // Function to check if a cell should get a custom background color
   function getCustomBackgroundColor(col, row) {
     for (var i = 0; i < colorRules.length; i++) {
@@ -1061,9 +1138,9 @@ function renderExcelMirror(container, data) {
   // Build a pending changes map: coord -> new value (staged, not yet saved)
   var _editPending = {};
 
-  function renderInputCell(info, coord, col, tdStyle) {
+  function renderInputCell(info, coord, col, tdStyle, overrideColor) {
     var curVal = _editPending[coord] !== undefined ? _editPending[coord] : (info.v || "");
-    var inputTextColor = isDark ? "#d8d8d8" : "#000000";  // contrast-aware
+    var inputTextColor = overrideColor || (isDark ? "#d8d8d8" : "#000000");  // contrast-aware
     var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;color:" + inputTextColor + ";";
     var input = "";
 
@@ -1681,6 +1758,8 @@ function renderExcelMirror(container, data) {
         
         var content = "";
 
+        var textRuleColor = getTextRuleColor(col3, r, cells);
+
         if (info) {
           if (info.font) {
             var f = info.font;
@@ -1690,6 +1769,7 @@ function renderExcelMirror(container, data) {
             if (f.size)      tdStyle.push("font-size:" + f.size + "px");
             if (f.color)     tdStyle.push("color:" + f.color);
           }
+          if (textRuleColor) tdStyle.push("color:" + textRuleColor);
           if (info.align) {
             var a = info.align;
             if (a.h === "center" || a.h === "centerContinuous") tdStyle.push("text-align:center");
@@ -1737,7 +1817,7 @@ function renderExcelMirror(container, data) {
     if (isEditable) {
         console.log("Rendering INPUT for:", coord, "col:", col3);
         tdStyle.push("padding:0");
-        content = renderInputCell(info, coord, col3, tdStyle);
+        content = renderInputCell(info, coord, col3, tdStyle, textRuleColor);
     } else if (info && info.v !== null && info.v !== undefined) {
         console.log("Rendering TEXT for:", coord, "value:", info.v);
         content = h(String(info.v));
@@ -2098,3 +2178,62 @@ async function doDeleteUser(username, name) {
 // ── Boot ───────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", init);
 
+// __Rendering the monitoring grid______________________________
+
+function renderMonitorGrid(container, data) {
+    // Simplified grid renderer for monitor screen
+    var cells = data.cells;
+    var colWidths = data.col_widths;
+    var rowHeights = data.row_heights;
+    var maxRow = data.max_row;
+    var cols = data.cols;
+    
+    var isDark = document.documentElement.getAttribute("data-theme") !== "light";
+    
+    // Simple styling
+    var tableStyle = [
+        "border-collapse:collapse",
+        "table-layout:fixed",
+        "font-family:Calibri,Arial,sans-serif",
+        "font-size:11px",
+        "background:" + (isDark ? "#1e1e1e" : "#ffffff"),
+        "color:" + (isDark ? "#e0e0e0" : "#000000"),
+        "width:100%"
+    ].join(";");
+    
+    var html = '<table style="' + tableStyle + '">';
+    
+    // Header row
+    html += '<thead><tr style="background:' + (isDark ? "#2a2a2a" : "#f2f2f2") + ';">';
+    html += '<th style="position:sticky;left:0;background:' + (isDark ? "#242424" : "#e8e8e8") + ';border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';min-width:28px;width:28px;padding:4px;">#</th>';
+    
+    for (var ci = 0; ci < cols.length; ci++) {
+        var col = cols[ci];
+        var cw = colWidths[col] || 64;
+        html += '<th style="border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';width:' + cw + 'px;min-width:' + cw + 'px;padding:4px;text-align:center;font-weight:600;">' + col + '</th>';
+    }
+    html += '</tr></thead>';
+    
+    // Body rows
+    html += '<tbody>';
+    for (var r = 1; r <= maxRow; r++) {
+        var rh = rowHeights[String(r)] || 20;
+        var rowBg = (r % 2 === 0) ? (isDark ? "#242424" : "#f7f9fc") : (isDark ? "#1e1e1e" : "#ffffff");
+        
+        html += '<tr style="height:' + rh + 'px;background:' + rowBg + ';">';
+        html += '<td style="position:sticky;left:0;background:' + (isDark ? "#242424" : "#e8e8e8") + ';border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';text-align:center;">' + r + '</td>';
+        
+        for (var ci = 0; ci < cols.length; ci++) {
+            var col = cols[ci];
+            var coord = col + r;
+            var info = cells[coord];
+            var value = (info && info.v !== undefined && info.v !== null) ? h(String(info.v)) : "";
+            
+            html += '<td style="border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';padding:2px 4px;">' + value + '</td>';
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    
+    container.innerHTML = html;
+}

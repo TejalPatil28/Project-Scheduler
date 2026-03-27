@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, session, send_from_directory
 from flask_cors import CORS
 import bcrypt
 import os
+from datetime import datetime, date
 from excel_db import (
     get_all_users,
     get_user_by_username,
@@ -218,40 +219,50 @@ def master_projects():
 @app.route("/api/monitor/sheet", methods=["GET"])
 @login_required
 def get_monitor_sheet():
-    """Return the raw sheet data for the user's monitoring file."""
-    from excel_db import get_raw_sheet, get_discipline_dirs
+    """Return the raw sheet data for the department monitoring file."""
+    from excel_db import get_monitor_sheet_data, PROJECTS_DIR
+    import os
+    
     user = get_current_user()
-    short = user.get("short_name", "").upper()
-    _, monitoring_dir, sched_cache, _ = get_discipline_dirs(user["role"])
-
+    role = user.get("role", "sw_tl")
+    
+    # Map role to department
+    role_to_dept = {
+        "sw_tl": "SW",
+        "hw_tl": "HW", 
+        "mfg_tl": "MFG",
+        "pm": "PM",
+        "admin": "SW",
+        "head": "SW"
+    }
+    
+    department = role_to_dept.get(role, "SW")
+    
+    # Construct path to department monitoring file
+    monitor_filename = f"{department}_Monitor.xlsx"
+    dept_dir = os.path.dirname(PROJECTS_DIR)  # This gives data/SW/
+    fpath = os.path.join(dept_dir, monitor_filename)
+    
+    print(f"[Monitor] Looking for: {fpath}")
+    
+    if not os.path.exists(fpath):
+        print(f"[Monitor] File not found: {fpath}")
+        return jsonify({"error": f"No monitoring file found for {department}"}), 404
+    
     # Check in-memory cache
-    cache_key = "monitor_" + short
+    cache_key = "monitor_" + department
     if cache_key in _sheet_cache:
         return jsonify(_sheet_cache[cache_key])
-
-    # Find monitoring file
-    if not os.path.exists(monitoring_dir):
-        return jsonify({"error": "No monitoring file found"}), 404
-
-    fpath = None
-    for fname in os.listdir(monitoring_dir):
-        if not (fname.endswith(".xlsb") or fname.endswith(".xlsx")):
-            continue
-        parts = fname.split("_")
-        if len(parts) >= 2 and parts[1].upper() == short:
-            fpath = os.path.join(monitoring_dir, fname)
-            break
-
-    if not fpath:
-        return jsonify({"error": "No monitoring file found"}), 404
-
+    
     try:
-        data = get_raw_sheet(fpath)
+        data = get_monitor_sheet_data(fpath, department)
         _sheet_cache[cache_key] = data
         return jsonify(data)
     except Exception as e:
+        print(f"[Monitor] Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/debug", methods=["GET"])
 @login_required

@@ -672,6 +672,7 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     Bulk update multiple tasks.
     - Updates JSON cache immediately (fast)
     - Queues Excel write for background (slow)
+    - Regenerates system memory JSON in background
     """
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
 
@@ -681,11 +682,27 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     # Step 2: Queue Excel write to background thread
     queue_excel_write(project_id, updates, role)
 
-    # Step 3: Count how many changes were made
+    # Step 3: Regenerate system memory JSON in background
+    # Get the file path
+    fpath = os.path.join(projects_dir, project_id + ".xlsx")
+    if not os.path.exists(fpath):
+        fpath = os.path.join(projects_dir, project_id + ".xlsb")
+    
+    # Queue system memory generation to background thread
+    def regenerate_sysmemory():
+        try:
+            generate_sysmemory_json(fpath, project_id, sched_cache)
+        except Exception as e:
+            print(f"System memory regeneration failed for {project_id}: {e}")
+    
+    import threading
+    sysmemory_thread = threading.Thread(target=regenerate_sysmemory, daemon=True)
+    sysmemory_thread.start()
+
+    # Step 4: Count how many changes were made
     updated_count = len(updates)
 
     return True, f"Updated {updated_count} tasks (Excel syncing in background)", now_str
-
 
 def create_user(name, short_name, username, password, role):
     """Add a new user to users.xlsx."""
@@ -1371,7 +1388,201 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
 
     # Write JSON sidecar cache for fast future loads
     _write_sheet_cache(project_id, result, sched_cache)
+    # Generate system memory JSON on initial load (if not from cache)
+    if not cached:
+        try:
+            generate_sysmemory_json(filepath, project_id, sched_cache)
+        except Exception as e:
+            print(f"System memory generation failed on initial load for {project_id}: {e}")
+    
     return result
+    return result
+
+def get_monitor_sheet_data(filepath, monitor_type="SW"):
+    """
+    Read monitoring file without PyCel, just basic cell values.
+    Creates JSON cache for fast subsequent loads.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter as gcl
+    from datetime import datetime, date, time
+    import json
+    import os
+    
+        # Define cache path
+    # filepath is: .../data/SW/SW_Monitor.xlsx
+    # We want: .../data/SW/cache/monitoring/SW_Monitor.json
+    base_dir = os.path.dirname(filepath)  # .../data/SW
+    cache_dir = os.path.join(base_dir, "cache", "monitoring")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"{monitor_type}_Monitor.json")
+    
+    # Return cache if exists
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading monitor cache: {e}")
+    
+    # Read Excel file
+    wb = load_workbook(filepath, data_only=True)
+    ws = wb.active
+    max_row = ws.max_row
+    max_col = ws.max_column
+    
+    # Get all columns (A, B, C, ... up to max_col)
+    cols = [gcl(i) for i in range(1, max_col + 1)]
+    
+    # Read cells
+    cells = {}
+    for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
+        for cell in row:
+            v = cell.value
+            # Handle datetime
+            if isinstance(v, datetime):
+                v = v.strftime("%d-%b-%y")
+            # Handle date (without time)
+            elif isinstance(v, date):
+                v = v.strftime("%d-%b-%y")
+            # Handle time (without date)
+            elif isinstance(v, time):
+                v = v.strftime("%H:%M")
+            # Keep other values as they are
+            cells[cell.coordinate] = {"v": v}
+    
+    result = {
+        "cells": cells,
+        "col_widths": {col: 64 for col in cols},
+        "row_heights": {str(r): 20 for r in range(1, max_row + 1)},
+        "max_row": max_row,
+        "max_col": max_col,
+        "cols": cols,
+        "col_groups": [],
+        "editable_fill": None,
+        "project_banner": {},
+        "info_rows": [],
+        "header_rows": [],
+        "left_panel": {},
+        "last_modified": None
+    }
+    
+    # Write cache
+    with open(cache_path, 'w') as f:
+        json.dump(result, f)
+    
+    wb.close()
+    return result
+    
+def generate_sysmemory_json(filepath, project_id, sched_cache=None):
+    """
+    Generate system memory JSON from columns CY to DJ (rows 1-55).
+    Uses PyCel to evaluate formulas.
+    Stores in data/[discipline]/cache/system_memory/[project_id]_sysmemory.json
+    """
+    import os
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter as gcl
+    
+    # Determine discipline from the filepath
+    # Path format: .../data/SW/SWESch/file.xlsx
+    # We want: .../data/SW/cache/system_memory/
+    parts = filepath.split(os.sep)
+    
+    # Find where 'data' is in the path
+    data_index = None
+    for i, part in enumerate(parts):
+        if part == 'data':
+            data_index = i
+            break
+    
+    if data_index is not None and data_index + 1 < len(parts):
+        discipline = parts[data_index + 1]
+        base_path = os.sep.join(parts[:data_index + 1])
+        sysmemory_cache = os.path.join(base_path, discipline, "cache", "system_memory")
+    else:
+        # Fallback to using DATA_DIR
+        sysmemory_cache = os.path.join(DATA_DIR, "SW", "cache", "system_memory")
+    
+    os.makedirs(sysmemory_cache, exist_ok=True)
+    
+    sysmemory_path = os.path.join(sysmemory_cache, f"{project_id}_sysmemory.json")
+    
+    # Load workbook with formulas
+    wb = load_workbook(filepath, data_only=False)
+    ws = wb.active
+    sheet_name = ws.title
+    
+    # Get column letters from CY to DJ
+    # CY = 103rd column, DJ = 114th column
+    start_col_idx = 103  # CY
+    end_col_idx = 114    # DJ
+    
+    sysmemory_cols = [gcl(i) for i in range(start_col_idx, end_col_idx + 1)]
+    
+    # Initialize PyCel
+    excel_compiler = None
+    if PY_CEL_AVAILABLE:
+        try:
+            excel_compiler = ExcelCompiler(filepath)
+            print(f"PyCel initialized for system memory generation: {project_id}")
+        except Exception as e:
+            print(f"PyCel initialization failed for system memory {project_id}: {e}")
+    
+    # Prepare system memory data
+    sysmemory_data = {
+        "project_id": project_id,
+        "columns": sysmemory_cols,
+        "rows": {},
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    # Loop through rows 1 to 55
+    for row in range(1, 56):
+        row_data = {}
+        for col in sysmemory_cols:
+            coord = f"{col}{row}"
+            cell = ws[coord]
+            value = None
+            
+            # If cell has formula and PyCel available, evaluate it
+            if excel_compiler and cell.data_type == 'f':
+                try:
+                    cell_ref = f"{sheet_name}!{coord}"
+                    value = excel_compiler.evaluate(cell_ref)
+                except Exception as e:
+                    print(f"System memory eval failed for {coord}: {e}")
+                    # Fallback to openpyxl value
+                    value = cell.value
+            else:
+                value = cell.value
+            
+            # Convert to appropriate type for JSON
+            if isinstance(value, (datetime, date)):
+                if isinstance(value, datetime):
+                    value = value.date()
+                value = value.strftime("%Y-%m-%d")
+            elif isinstance(value, float):
+                # Keep as float
+                pass
+            elif value is None:
+                value = None
+            
+            row_data[col] = value
+        
+        sysmemory_data["rows"][str(row)] = row_data
+    
+    wb.close()
+    
+    # Write to JSON file
+    try:
+        with open(sysmemory_path, 'w') as f:
+            json.dump(sysmemory_data, f, indent=2)
+        print(f"System memory JSON saved: {sysmemory_path}")
+        return sysmemory_path
+    except Exception as e:
+        print(f"Failed to save system memory JSON for {project_id}: {e}")
+        return None
 
 def delete_user(username):
     """Remove a user from users.xlsx."""
