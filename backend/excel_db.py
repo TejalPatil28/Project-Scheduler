@@ -509,14 +509,25 @@ def get_all_projects(role="sw_tl"):
 
 def get_projects_for_user(user):
     """Get projects for user.
-    For non-admin: returns monitoring file entries directly (fast, no Excel open).
-    For admin/head: scans discipline SWESch folder."""
+    - For admin/head: returns ALL projects from department monitoring file
+    - For TL: returns only projects assigned to them
+    """
     role = user["role"]
+    short_name = user.get("short_name", "").strip().upper()
+
+    print(f"[get_projects_for_user] role: {role}, short_name: {short_name}")
 
     if role in ("admin", "head"):
-        return get_all_projects()
+        # Admin/Head: get all projects from department monitoring file
+        print("[get_projects_for_user] Using get_all_monitor_projects")
+        master_list = get_all_monitor_projects(role)
+        print(f"[get_projects_for_user] Found {len(master_list)} projects from monitor file")
+    else:
+        # TL: get projects where they are assigned
+        print("[get_projects_for_user] Using get_master_projects")
+        master_list = get_master_projects(user["username"])
+        print(f"[get_projects_for_user] Found {len(master_list)} projects")
 
-    master_list = get_master_projects(user["username"])
     result = []
     for m in master_list:
         result.append({
@@ -531,9 +542,12 @@ def get_projects_for_user(user):
 def get_project_by_id(project_id, role="sw_tl"):
     """Read project header. Uses sheet JSON cache if available, else reads Excel."""
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
-    # Try to get header from sheet JSON cache first (fast)
+    
+    # ALWAYS try sheet JSON cache first
     sheet = _read_sheet_cache(project_id, sched_cache)
+    
     if sheet and sheet.get("project_banner"):
+        # Fast path - use cached banner (THIS SHOULD BE FAST!)
         b = sheet["project_banner"]
         return {
             "id":            project_id,
@@ -542,18 +556,40 @@ def get_project_by_id(project_id, role="sw_tl"):
             "section":       b.get("section", ""),
             "pm_name":       sheet.get("project_banner", {}).get("sales_manager", ""),
             "sw_tl_name":    b.get("sales_engineer", ""),
+            "overall_percent": 0,  # Not in cache, but not critical for first load
         }
-    # Fall back to reading Excel directly
+    
+    # If cache missing, generate sheet data first (this will create the cache)
+    # Then read from cache
     fpath = os.path.join(projects_dir, project_id + ".xlsx")
     if not os.path.exists(fpath):
         fpath = os.path.join(projects_dir, project_id + ".xlsb")
         if not os.path.exists(fpath):
             return None
+    
+    # Generate the sheet cache first (this is slow but only once)
     try:
-        return read_project_header(fpath)
-    except Exception:
+        from excel_db import get_raw_sheet
+        sheet_data = get_raw_sheet(fpath, sched_cache=sched_cache)
+        # Now read from cache
+        sheet = _read_sheet_cache(project_id, sched_cache)
+        if sheet and sheet.get("project_banner"):
+            b = sheet["project_banner"]
+            return {
+                "id":            project_id,
+                "or_number":     b.get("or_number", ""),
+                "customer_name": b.get("customer_name", ""),
+                "section":       b.get("section", ""),
+                "pm_name":       sheet.get("project_banner", {}).get("sales_manager", ""),
+                "sw_tl_name":    b.get("sales_engineer", ""),
+                "overall_percent": 0,
+            }
+    except Exception as e:
+        print(f"Failed to generate sheet cache for {project_id}: {e}")
         return None
-
+    
+    return None
+    
 # ── Tasks ──────────────────────────────────────────────────────
 def _cell_val(cells, col, row):
     """Get raw value from sheet JSON cells dict."""
@@ -682,28 +718,29 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     # Step 2: Queue Excel write to background thread
     queue_excel_write(project_id, updates, role)
 
+    # TEMPORARILY DISABLED - System memory JSON generation
     # Step 3: Regenerate system memory JSON in background
-    # Get the file path
-    fpath = os.path.join(projects_dir, project_id + ".xlsx")
-    if not os.path.exists(fpath):
-        fpath = os.path.join(projects_dir, project_id + ".xlsb")
-    
-    # Queue system memory generation to background thread
-    def regenerate_sysmemory():
-        try:
-            generate_sysmemory_json(fpath, project_id, sched_cache)
-        except Exception as e:
-            print(f"System memory regeneration failed for {project_id}: {e}")
-    
-    import threading
-    sysmemory_thread = threading.Thread(target=regenerate_sysmemory, daemon=True)
-    sysmemory_thread.start()
+    # # Get the file path
+    # fpath = os.path.join(projects_dir, project_id + ".xlsx")
+    # if not os.path.exists(fpath):
+    #     fpath = os.path.join(projects_dir, project_id + ".xlsb")
+    # 
+    # # Queue system memory generation to background thread
+    # def regenerate_sysmemory():
+    #     try:
+    #         generate_sysmemory_json(fpath, project_id, sched_cache)
+    #     except Exception as e:
+    #         print(f"System memory regeneration failed for {project_id}: {e}")
+    # 
+    # import threading
+    # sysmemory_thread = threading.Thread(target=regenerate_sysmemory, daemon=True)
+    # sysmemory_thread.start()
 
     # Step 4: Count how many changes were made
     updated_count = len(updates)
 
     return True, f"Updated {updated_count} tasks (Excel syncing in background)", now_str
-
+    
 def create_user(name, short_name, username, password, role):
     """Add a new user to users.xlsx."""
     import bcrypt
@@ -743,9 +780,9 @@ def update_user(username, updates):
 
 def get_master_projects(username):
     """
-    Find the user's monitoring file in their discipline folder root.
-    File naming: SWMonitor_{INITIALS}_V{x.x}_{date}.xlsb
-    Uses JSON cache in discipline/cache/monitoring/
+    Return the project list for a user from the shared SW_Monitor file.
+    - Admin/Head: all projects unfiltered
+    - SW TL: only projects where their initials appear in col C (SWH HEAD) or col D (SWE NAME)
     """
     user = get_user_by_username(username)
     if not user:
@@ -753,31 +790,61 @@ def get_master_projects(username):
 
     short = user.get("short_name", "").strip().upper()
     role  = user.get("role", "sw_tl")
-    _, monitoring_dir, _, mon_cache = get_discipline_dirs(role)
 
-    if not os.path.exists(monitoring_dir):
+    # Admin and head see all projects unfiltered
+    if role in ("admin", "head"):
+        return get_all_monitor_projects(role)
+
+    # SW TL: read all projects from the shared monitor file then filter
+    all_projects = get_all_monitor_projects(role)
+    filtered = [
+        m for m in all_projects
+        if m.get("swh_head") == short or m.get("swe_name") == short
+    ]
+    print(f"[get_master_projects] SW TL {short}: {len(filtered)}/{len(all_projects)} projects")
+    return filtered
+
+def get_all_monitor_projects(role="sw_tl"):
+    """
+    Get ALL projects from the department monitoring file (unfiltered).
+    Used by head and admin roles.
+    """
+    # Map role to department
+    role_to_dept = {
+        "sw_tl": "SW",
+        "hw_tl": "HW",
+        "mfg_tl": "MFG",
+        "pm": "PM",
+        "admin": "SW",
+        "head": "SW"
+    }
+    
+    department = role_to_dept.get(role, "SW")
+    
+    # Get the department monitoring file path
+    monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
+    
+    print(f"[get_all_monitor_projects] Looking for: {monitor_path}")
+    
+    if not os.path.exists(monitor_path):
+        print(f"[get_all_monitor_projects] File not found: {monitor_path}")
         return []
+    
+    # Read the monitoring file
+    if monitor_path.endswith(".xlsb"):
+        results = _read_master_xlsb(monitor_path)
+    else:
+        results = _read_master_xlsx(monitor_path)
+    
+    print(f"[get_all_monitor_projects] Found {len(results)} projects")
 
-    # Check monitoring cache first
-    cached = _read_monitoring_cache(short, mon_cache)
-    if cached is not None:
-        return cached
+    # Print first few project IDs for debugging
+    for i, r in enumerate(results[:5]):
+        print(f"  Project {i}: {r.get('project_id')}")
+    
+    return results
 
-    # Find monitoring file by initials
-    for fname in os.listdir(monitoring_dir):
-        if not (fname.endswith(".xlsb") or fname.endswith(".xlsx")):
-            continue
-        parts = fname.split("_")
-        if len(parts) >= 2 and parts[1].upper() == short:
-            fpath = os.path.join(monitoring_dir, fname)
-            result = _read_master_xlsb(fpath) if fname.endswith(".xlsb") else _read_master_xlsx(fpath)
-            _write_monitoring_cache(short, result, mon_cache)
-            return result
-
-    return []
-
-
-def _master_row_to_entry(pid, ba_val, ba_rgb=None):
+def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None):
     """Convert raw col-F / col-BA values into a result dict."""
     if not pid:
         return None
@@ -826,6 +893,8 @@ def _master_row_to_entry(pid, ba_val, ba_rgb=None):
         "file_id":       normalized_id,  # actual file id e.g. SWESch_FSL_2122_CHN_OR004_PLC
         "stale":         stale,
         "file_exists":   file_exists,
+        "swh_head":      (swh_head or "").strip().upper(),
+        "swe_name":      (swe_name or "").strip().upper(),
     }
 
 
@@ -848,10 +917,12 @@ def _read_master_xlsb(path):
                 for i, row in enumerate(ws.rows()):
                     if i == 0:
                         continue  # skip header
-                    # col F = index 5, col BA = index 52
-                    f_val  = row[5].v  if len(row) > 5  else None
-                    ba_val = row[52].v if len(row) > 52 else None
-                    entry = _master_row_to_entry(f_val, ba_val)
+                    # col C = index 2, col D = index 3, col F = index 5, col BA = index 52
+                    f_val    = row[5].v  if len(row) > 5  else None
+                    ba_val   = row[52].v if len(row) > 52 else None
+                    swh_head = row[2].v  if len(row) > 2  else None
+                    swe_name = row[3].v  if len(row) > 3  else None
+                    entry = _master_row_to_entry(f_val, ba_val, swh_head=swh_head, swe_name=swe_name)
                     if entry:
                         results.append(entry)
     except Exception as e:
@@ -872,10 +943,14 @@ def _read_master_xlsx(path):
 
     results = []
     for row in ws.iter_rows(min_row=2, values_only=False):
+        c_cell  = row[2]  if len(row) > 2  else None
         f_cell  = row[5]  if len(row) > 5  else None
+        d_cell  = row[3]  if len(row) > 3  else None
         ba_cell = row[52] if len(row) > 52 else None
-        pid    = f_cell.value if f_cell else None
-        ba_val = ba_cell.value if ba_cell else None
+        pid      = f_cell.value if f_cell else None
+        ba_val   = ba_cell.value if ba_cell else None
+        swh_head = c_cell.value if c_cell else None
+        swe_name = d_cell.value if d_cell else None
         # Try to get fill colour for fallback staleness check
         ba_rgb = None
         if ba_cell:
@@ -885,7 +960,7 @@ def _read_master_xlsx(path):
                     ba_rgb = fg.rgb
             except Exception:
                 pass
-        entry = _master_row_to_entry(pid, ba_val, ba_rgb)
+        entry = _master_row_to_entry(pid, ba_val, ba_rgb, swh_head=swh_head, swe_name=swe_name)
         if entry:
             results.append(entry)
     return results
@@ -1389,34 +1464,41 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     # Write JSON sidecar cache for fast future loads
     _write_sheet_cache(project_id, result, sched_cache)
     # Generate system memory JSON on initial load (if not from cache)
-    if not cached:
-        try:
-            generate_sysmemory_json(filepath, project_id, sched_cache)
-        except Exception as e:
-            print(f"System memory generation failed on initial load for {project_id}: {e}")
+    #if not cached:
+    #    try:
+    #       generate_sysmemory_json(filepath, project_id, sched_cache)
+    #   except Exception as e:
+    #        print(f"System memory generation failed on initial load for {project_id}: {e}")
     
-    return result
+    
     return result
 
 def get_monitor_sheet_data(filepath, monitor_type="SW"):
     """
     Read monitoring file without PyCel, just basic cell values.
+    - Columns: A to BW only (ignore BX onwards)
+    - Rows 1-9: skipped (useless)
+    - Row 10: always kept (header)
+    - Row 11: skipped (ignorable)
+    - Rows 12+: kept only if at least one cell has a value
+    - Empty cells in kept rows are not stored
     Creates JSON cache for fast subsequent loads.
     """
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
+    from openpyxl.utils import column_index_from_string as col2idx
     from datetime import datetime, date, time
     import json
     import os
-    
-        # Define cache path
+
+    # Define cache path
     # filepath is: .../data/SW/SW_Monitor.xlsx
     # We want: .../data/SW/cache/monitoring/SW_Monitor.json
     base_dir = os.path.dirname(filepath)  # .../data/SW
     cache_dir = os.path.join(base_dir, "cache", "monitoring")
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{monitor_type}_Monitor.json")
-    
+
     # Return cache if exists
     if os.path.exists(cache_path):
         try:
@@ -1424,54 +1506,86 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
                 return json.load(f)
         except Exception as e:
             print(f"Error reading monitor cache: {e}")
-    
+
+    # Column limits: A=1, BW=75
+    MAX_COL_IDX = col2idx("BW")  # 75
+    cols = [gcl(i) for i in range(1, MAX_COL_IDX + 1)]
+
     # Read Excel file
     wb = load_workbook(filepath, data_only=True)
     ws = wb.active
     max_row = ws.max_row
-    max_col = ws.max_column
-    
-    # Get all columns (A, B, C, ... up to max_col)
-    cols = [gcl(i) for i in range(1, max_col + 1)]
-    
-    # Read cells
+
+    def _fmt(v):
+        """Format cell value for JSON serialization."""
+        if isinstance(v, datetime):
+            return v.strftime("%d-%b-%y")
+        if isinstance(v, date):
+            return v.strftime("%d-%b-%y")
+        if isinstance(v, time):
+            return v.strftime("%H:%M")
+        return v
+
     cells = {}
-    for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
+    kept_rows = []
+
+    for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=MAX_COL_IDX):
+        row_num = row[0].row
+
+        # Skip rows 1-9 and row 11
+        if row_num <= 9 or row_num == 11:
+            continue
+
+        # Row 10 = header, always keep
+        if row_num == 10:
+            for cell in row:
+                v = _fmt(cell.value)
+                if v is not None and str(v).strip() != "":
+                    cells[cell.coordinate] = {"v": v}
+            kept_rows.append(row_num)
+            continue
+
+        # Rows 12+: skip junk formula rows, only keep real project rows (FSL in col B)
+        col_b = ws.cell(row=row_num, column=2).value
+        if not col_b or 'FSL' not in str(col_b):
+            continue
+
+        # Only keep if at least one cell has a value
+        row_cells = {}
+        has_value = False
         for cell in row:
-            v = cell.value
-            # Handle datetime
-            if isinstance(v, datetime):
-                v = v.strftime("%d-%b-%y")
-            # Handle date (without time)
-            elif isinstance(v, date):
-                v = v.strftime("%d-%b-%y")
-            # Handle time (without date)
-            elif isinstance(v, time):
-                v = v.strftime("%H:%M")
-            # Keep other values as they are
-            cells[cell.coordinate] = {"v": v}
-    
+            v = _fmt(cell.value)
+            if v is not None and str(v).strip() != "":
+                row_cells[cell.coordinate] = {"v": v}
+                has_value = True
+
+        if has_value:
+            cells.update(row_cells)
+            kept_rows.append(row_num)
+
     result = {
-        "cells": cells,
-        "col_widths": {col: 64 for col in cols},
-        "row_heights": {str(r): 20 for r in range(1, max_row + 1)},
-        "max_row": max_row,
-        "max_col": max_col,
-        "cols": cols,
-        "col_groups": [],
+        "cells":         cells,
+        "col_widths":    {col: 64 for col in cols},
+        "row_heights":   {str(r): 20 for r in kept_rows},
+        "max_row":       max(kept_rows) if kept_rows else 0,
+        "max_col":       MAX_COL_IDX,
+        "cols":          cols,
+        "kept_rows":     kept_rows,   # frontend can use this to know exact rows to render
+        "col_groups":    [],
         "editable_fill": None,
         "project_banner": {},
-        "info_rows": [],
-        "header_rows": [],
-        "left_panel": {},
+        "info_rows":     [],
+        "header_rows":   [10],
+        "left_panel":    {},
         "last_modified": None
     }
-    
+
     # Write cache
     with open(cache_path, 'w') as f:
         json.dump(result, f)
-    
+
     wb.close()
+    print(f"[Monitor] Cached {len(cells)} cells across {len(kept_rows)} rows (cols A-BW)")
     return result
     
 def generate_sysmemory_json(filepath, project_id, sched_cache=None):

@@ -96,9 +96,10 @@ function renderLogin() {
       '<div class="login-grid"></div>',
       '<div class="login-glow"></div>',
       '<div class="login-card">',
-        '<div class="login-logo">&#x2B21;</div>',
-        '<div class="login-title">Workezz Project Scheduler</div>',
-        '<div class="login-sub">Sign in to your workspace</div>',
+        '<div class="login-logo" style="width:46px;height:46px;background:var(--accent);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:white;">W</div>',
+        '<div class="login-title" style="font-size:24px;font-weight:800;margin-bottom:4px;">Workezz</div>',
+'<div class="login-sub" style="font-size:16px;color:var(--text2);margin-bottom:20px;">Project Scheduler</div>',
+'<div style="font-size:11px;color:var(--text3);margin-bottom:26px;text-align:center;">Sign in to your workspace</div>',
         '<div id="login-err" class="alert alert-error hidden"></div>',
         '<div class="form-group">',
           '<label class="form-label">Username</label>',
@@ -150,6 +151,7 @@ function buildPopoverHTML() {
       '<button class="popover-item" onclick="showUserModal(); closeSettingsPopover();">\u2795 Add User</button>',
       '<button class="popover-item" onclick="renderUsers(); closeSettingsPopover();">\u{1F465} Manage Users</button>',
       '<button class="popover-item" onclick="doRebuildIndex(); closeSettingsPopover();">\u{1F504} Rebuild Index</button>',
+      '<button class="popover-item" onclick="refreshMasterList(); closeSettingsPopover();">\u{1F504} Refresh Projects</button>',
     ].join("");
   }
   return [
@@ -172,7 +174,7 @@ function buildPopoverHTML() {
         '<div class="popover-sep"></div>',
         '<button class="popover-item" onclick="switchToDashboard(); closeSettingsPopover();">\u{1F4CA} Dashboard</button>',
         '<button class="popover-item" onclick="switchToMonitor(); closeSettingsPopover();">\u{1F50D} Monitor</button>',
-        '<button class="popover-item" onclick="switchToProjects(); closeSettingsPopover();">\u{1F4C1} Projects</button>',
+        '<button class="popover-item" onclick="switchToProjects(); closeSettingsPopover();">\u{1F4C1} Schedules</button>',
         adminItems,
         '<div class="popover-sep"></div>',
         '<button class="popover-item danger" onclick="doLogout()">\u23FB Sign Out</button>',
@@ -219,9 +221,9 @@ function renderShell() {
       '<div class="shell-body">',
         '<aside class="sidebar" id="master-sidebar">',
           '<div class="master-sidebar-header">',
-            '<div class="master-sidebar-title">My Files</div>',
-            '<button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Close sidebar">&#8249;</button>',
-          '</div>',
+  '<div class="master-sidebar-title">My Files</div>',
+  '<button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Close sidebar">&#8249;</button>',
+'</div>',
           '<div class="master-pane-list" id="master-list">',
             '<div class="master-empty">Loading...</div>',
           '</div>',
@@ -378,7 +380,7 @@ async function switchToMonitor() {
         wrap.style.overflow = "auto";
         page.innerHTML = "";
         page.appendChild(wrap);
-        renderMonitor(wrap, data);
+        renderMonitor(wrap, data, state.user);
     } catch(err) {
         page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
     }
@@ -486,15 +488,63 @@ function renderMasterList(masterList, projects) {
   filterMasterList("");
 }
 
+async function refreshMasterList() {
+    toast("Refreshing project list...");
+    try {
+      // Clear monitor cache on server
+        await API.req("POST", "/admin/clear-monitor-cache");
+        
+        // Clear the client-side cache of master list
+        window._masterListFull = null;
+        window._masterList = null;
+        
+        // Fetch fresh master list from server
+        var masterList = await API.req("GET", "/master/projects");
+        var projects = window._dashProjects || [];
+        
+        // Update global variables
+        window._masterList = masterList;
+        window._masterListFull = masterList;
+        
+        // Re-render the sidebar list
+        renderMasterList(masterList, projects);
+        
+        toast("Project list refreshed");
+    } catch(err) {
+        toast("Failed to refresh: " + err.message, "error");
+    }
+}
+
 function filterMasterList(searchTerm) {
   var masterList = window._masterListFull || [];
   var projects = window._projectsFull || [];
   var container = document.getElementById("master-list-items");
   if (!container) return;
 
+  var user     = state.user || {};
+  var role     = user.role || "";
+  var initials = (user.short_name || "").trim().toUpperCase();
+  var isHead   = (role === "head" || role === "admin");
+
+  // Apply role filtering (same logic as monitor screen)
+  var roleFiltered;
+  if (isHead) {
+    roleFiltered = masterList;
+  } else {
+    // Check SWH Head (swh_head) first, fallback to SWE Name (swe_name)
+    var swhRows = masterList.filter(function(m) {
+      return (m.swh_head || "").trim().toUpperCase() === initials;
+    });
+    roleFiltered = swhRows.length > 0
+      ? swhRows
+      : masterList.filter(function(m) {
+          return (m.swe_name || "").trim().toUpperCase() === initials;
+        });
+  }
+
+  // Apply search term on top of role filter
   var term = searchTerm.toLowerCase().trim();
-  
-  var filtered = masterList.filter(function(m) {
+  var filtered = roleFiltered.filter(function(m) {
     var pid = m.project_id || "";
     var fileId = m.file_id || "";
     return term === "" || pid.toLowerCase().includes(term) || fileId.toLowerCase().includes(term);
@@ -907,7 +957,7 @@ function renderProjectPage() {
         '</div>',
       '</div>',
     '</div>',
-    '<div class="save-bar" id="save-bar">',
+    '<div class="save-bar" id="save-bar"' + (state.user && (state.user.role === "admin" || state.user.role === "head") ? ' style="display:none"' : '') + '>',
       '<div class="save-bar-left">',
         '<div class="save-count" id="change-count">0</div>',
         '<div class="save-msg">unsaved changes</div>',
@@ -1468,6 +1518,7 @@ function renderExcelMirror(container, data) {
       var ci = 0;
       while (ci < cols.length) {
         var col = cols[ci];
+        if (col === "AC" || col === "AE") { ci++; continue; }
         var gi  = colToGroup[col];
 
         if (gi !== undefined && gi >= 0 && cols[ci] === colGroups[gi].cols[0]) {
@@ -1580,6 +1631,7 @@ function renderExcelMirror(container, data) {
     html += '<tr style="height:26px;">';
     for (var chi = 0; chi < cols.length; chi++) {
       var chCol = cols[chi];
+      if (chCol === "AC" || chCol === "AE") continue;
       if (isCollapsedCol(chCol)) continue;
       var chCw = colWidths[chCol] || 64;
       var chDef = chDefs[chCol] || {};
@@ -1661,6 +1713,8 @@ function renderExcelMirror(container, data) {
 
         var col3  = cols[ci3];
 
+        if (col3 === "AC" || col3 === "AE") continue;
+
         if (col3 === "R") console.log("Column R found at row", r, "value:", cells[col3 + r] ? cells[col3 + r].v : "null");
         var coord = col3 + r;
         var info  = cells[coord];
@@ -1700,64 +1754,85 @@ function renderExcelMirror(container, data) {
           "vertical-align:bottom",
           "white-space:nowrap",
         ];
-        var content = "";
-
-                // ── BACKGROUND COLOR LOGIC ──────────────────────────────
-        // AD_COLORS defined above (isDark-aware)
-        
-        // Check if AD column
+        // ── EDITABILITY — computed once, used by both bg and input rendering ──
+        var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head");
         var isADColumn = (col3 === "AD" && r >= 9);
-        
-        // Check if Z column is 100% complete
-        var isZComplete = false;
-        if (col3 === "Z" && r >= 9) {
-            var zCoord = "Z" + r;
-            var zInfo = cells[zCoord];
-            var zVal = zInfo ? String(zInfo.v || "") : "";
-            isZComplete = (zVal === "100%" || zVal === "100");
-        }
-        
-        // Get custom background color from rules (for non-AD columns)
-        var customBg = getCustomBackgroundColor(col3, r);
-        
-        // Determine which background color to apply
-        var bgColor = null;
-        
+        var isEditable = false;
         if (isADColumn) {
-            // AD column: use color based on dropdown value
-            var adCoord = "AD" + r;
-            var adInfo = cells[adCoord];
-            var adValue = adInfo ? String(adInfo.v || "").toLowerCase().trim() : "";
-            var adColor = AD_COLORS[adValue];
-            if (adColor) {
-                var AD_FG = isDark ? {
-                    "engineering": "#f87171", "purchase": "#86efac",
-                    "software": "#60a5fa", "project management": "#93c5fd",
-                    "manufacturing": "#a3e635", "sales": "#2dd4bf", "client": "#d8b4fe"
-                } : {};
-                bgColor = adColor;
-                tdStyle.push("color:" + (AD_FG[adValue] || "#ffffff"));
-            }
-        } else if (isZComplete) {
-            // Z column at 100%: green
-            bgColor = isDark ? "#1a3a1a" : "#92d050";
-            if (isDark) tdStyle.push("color:#4ade80");
-        } else if (customBg) {
-            // Custom color from rules (E-W, X,Y,Z)
-            bgColor = customBg;
-            if (isDark) tdStyle.push("color:#ffffff");
+            // AD editability: frontend rule — editable only when Z < 100%
+            var _zInfoAD = cells["Z" + r];
+            var _zValAD  = _zInfoAD ? String(_zInfoAD.v || "") : "";
+            var _zDoneAD = (_zValAD === "100%" || _zValAD === "100");
+            isEditable = !isReadOnly && !_zDoneAD;
         } else {
-            // Default row background
-            bgColor = rowBg;
+            isEditable = !isReadOnly && !!(info && info.editable);
         }
-        
-        // Apply the background color if we have one
+
+        // ── BACKGROUND COLOR LOGIC ──────────────────────────────
+        // Shared Z-complete flag (used for Z green and AB yellow)
+        var _zInfoRow = cells["Z" + r];
+        var _zValRow  = _zInfoRow ? String(_zInfoRow.v || "") : "";
+        var isZComplete = (col3 === "Z" && r >= 9) && (_zValRow === "100%" || _zValRow === "100");
+
+        // AB yellow: Z % complete < AA expected % complete
+        var isABBehind = false;
+        if (col3 === "AB" && r >= 9) {
+            var _aaInfo = cells["AA" + r];
+            var _zNum   = parseFloat(_zValRow.replace("%", "").trim());
+            var _aaNum  = parseFloat(_aaInfo ? String(_aaInfo.v || "").replace("%", "").trim() : "");
+            isABBehind = !isNaN(_zNum) && !isNaN(_aaNum) && _zNum < _aaNum;
+        }
+
+        var customBg = getCustomBackgroundColor(col3, r);
+        var bgColor  = null;
+
+        // --- AD COLUMN ---
+        if (isADColumn) {
+            var _adInfo       = cells["AD" + r];
+            var _adValue      = _adInfo ? String(_adInfo.v || "").trim() : "";
+            var _adValueLower = _adValue.toLowerCase();
+            var _adColor      = AD_COLORS[_adValueLower];
+            var AD_FG = isDark ? {
+                "engineering": "#f87171", "purchase": "#86efac",
+                "software": "#60a5fa", "project management": "#93c5fd",
+                "manufacturing": "#a3e635", "sales": "#2dd4bf", "client": "#d8b4fe"
+            } : {};
+
+            if (_adColor) {
+                // Dept selected (editable or not): always show dept color
+                bgColor = _adColor;
+                tdStyle.push("color:" + (AD_FG[_adValueLower] || "#ffffff"));
+            } else if (isEditable) {
+                // Editable + no dept selected: blue to signal user can interact
+                bgColor = isDark ? "#1a3a5a" : "#b8d8ff";
+                tdStyle.push("color:" + (isDark ? "#88ccff" : "#0066cc"));
+            } else {
+                // Not editable + no dept: row background
+                bgColor = rowBg;
+            }
+        }
+        // --- NON-AD COLUMNS ---
+        else {
+            if (isZComplete) {
+                bgColor = isDark ? "#1a3a1a" : "#92d050";
+                if (isDark) tdStyle.push("color:#4ade80");
+            } else if (isABBehind) {
+                // AB column behind schedule: yellow background
+                bgColor = isDark ? "#3a2e00" : "#fff176";
+            } else if (customBg) {
+                bgColor = customBg;
+                if (isDark) tdStyle.push("color:#ffffff");
+            } else {
+                bgColor = rowBg;
+            }
+        }
+
+        // Apply background color (single push — duplicate removed)
         if (bgColor) {
             tdStyle.push("background-color:" + bgColor);
         }
-        
-        var content = "";
 
+        var content = "";
         var textRuleColor = getTextRuleColor(col3, r, cells);
 
         if (info) {
@@ -1786,42 +1861,13 @@ function renderExcelMirror(container, data) {
             if (b.top)    tdStyle.push("border-top:"    + borderStyle(b.top));
             if (b.bottom) tdStyle.push("border-bottom:" + borderStyle(b.bottom));
           }
-              // For AD column, determine editability based on Z value (ignore backend editable flag)
-    var isADColumnForEdit = (col3 === "AD" && r >= 9);
-    var canEditAD = true;
 
-    if (isADColumnForEdit && r >= 9) {
-        var zCoord = "Z" + r;
-        var zInfo = cells[zCoord];
-        var zVal = zInfo ? String(zInfo.v || "") : "";
-        var zIsComplete = (zVal === "100%" || zVal === "100");
-        canEditAD = !zIsComplete;  // Only editable if NOT 100%
-        
-        // DEBUG: Log AD column info
-        console.log("========== AD COLUMN DEBUG ==========");
-        console.log("Row:", r);
-        console.log("Z Value from cells:", zVal);
-        console.log("Z Is Complete (100%):", zIsComplete);
-        console.log("Can Edit AD:", canEditAD);
-        console.log("=====================================");
-    }
-
-    // Use frontend-calculated value for AD column, otherwise use backend editable flag
-    var isEditable = isADColumnForEdit ? canEditAD : (info && info.editable);
-
-    // DEBUG: Log the final decision
-    if (isADColumnForEdit) {
-        console.log("FINAL - AD Column Row", r, "isEditable:", isEditable);
-    }
-
-    if (isEditable) {
-        console.log("Rendering INPUT for:", coord, "col:", col3);
-        tdStyle.push("padding:0");
-        content = renderInputCell(info, coord, col3, tdStyle, textRuleColor);
-    } else if (info && info.v !== null && info.v !== undefined) {
-        console.log("Rendering TEXT for:", coord, "value:", info.v);
-        content = h(String(info.v));
-    }
+          if (isEditable) {
+            tdStyle.push("padding:0");
+            content = renderInputCell(info, coord, col3, tdStyle, textRuleColor);
+          } else if (info.v !== null && info.v !== undefined) {
+            content = h(String(info.v));
+          }
         } else {
           // No cell info
           content = "";

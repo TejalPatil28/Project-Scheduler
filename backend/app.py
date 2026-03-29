@@ -23,6 +23,8 @@ app = Flask(__name__, static_folder=None)
 
 # In-memory sheet cache (JSON sidecar handles persistence across restarts)
 _sheet_cache = {}
+# In-memory cache for master project lists (monitor file is read-only from outside)
+_master_projects_cache = {}
 app.secret_key = "scheduler_excel_secret_2024"
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -118,8 +120,10 @@ def get_project(project_id):
     # Access check — if project is in user's monitoring file they have access
     role = user["role"]
     if role not in ("admin", "head"):
-        from excel_db import get_master_projects
-        master_list = get_master_projects(user["username"])
+        if "all_master_projects" not in _master_projects_cache:
+            from excel_db import get_all_monitor_projects
+            _master_projects_cache["all_master_projects"] = get_all_monitor_projects(role)
+        master_list = _master_projects_cache["all_master_projects"]
         allowed_ids = {m.get("file_id") for m in master_list}
         if project_id not in allowed_ids:
             return jsonify({"error": "Access denied"}), 403
@@ -182,9 +186,21 @@ def save_tasks(project_id):
 def get_sheet_data(project_id):
     """Return raw cell data for the Excel-mirror UI. Cached in memory."""
     from excel_db import get_raw_sheet, PROJECTS_DIR
+    user = get_current_user()
+    role = user["role"]
+    is_readonly = role in ("admin", "head")
+
     # Check in-memory cache first (fastest)
     if project_id in _sheet_cache:
-        return jsonify(_sheet_cache[project_id])
+        data = _sheet_cache[project_id]
+        if is_readonly:
+            # Return a copy with editable flags stripped — don't mutate the cache
+            import copy
+            data = copy.deepcopy(data)
+            for cell in data.get("cells", {}).values():
+                cell.pop("editable", None)
+        return jsonify(data)
+
     fpath = os.path.join(PROJECTS_DIR, project_id + ".xlsx")
     if not os.path.exists(fpath):
         fpath_b = os.path.join(PROJECTS_DIR, project_id + ".xlsb")
@@ -203,6 +219,11 @@ def get_sheet_data(project_id):
             except Exception:
                 data["last_modified"] = None
         _sheet_cache[project_id] = data  # store in memory
+        if is_readonly:
+            import copy
+            data = copy.deepcopy(data)
+            for cell in data.get("cells", {}).values():
+                cell.pop("editable", None)
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -212,8 +233,10 @@ def get_sheet_data(project_id):
 @login_required
 def master_projects():
     user = get_current_user()
-    projects = get_master_projects(user["username"])
-    return jsonify(projects)
+    if "all_master_projects" not in _master_projects_cache:
+        from excel_db import get_all_monitor_projects
+        _master_projects_cache["all_master_projects"] = get_all_monitor_projects(user["role"])
+    return jsonify(_master_projects_cache["all_master_projects"])
 
 
 @app.route("/api/monitor/sheet", methods=["GET"])
@@ -295,8 +318,41 @@ def rebuild_index():
         return jsonify({"error": "Access denied"}), 403
     # Clear in-memory sheet cache so all projects reload fresh
     _sheet_cache.clear()
+    _master_projects_cache.clear()
     return jsonify({"message": "Cache cleared successfully"})
 
+@app.route("/api/admin/clear-monitor-cache", methods=["POST"])
+@login_required
+def clear_monitor_cache():
+    user = get_current_user()
+    if user["role"] != "admin":
+        return jsonify({"error": "Access denied"}), 403
+    
+    # Clear in-memory monitor cache
+    global _sheet_cache
+    keys_to_remove = [k for k in _sheet_cache.keys() if k.startswith("monitor_")]
+    for key in keys_to_remove:
+        del _sheet_cache[key]
+    
+    # Also delete JSON cache files for monitor
+    from excel_db import DATA_DIR
+    import os
+    
+    # Delete monitor cache for all departments
+    departments = ["SW", "HW", "MFG", "PM"]
+    for dept in departments:
+        monitor_cache_dir = os.path.join(DATA_DIR, dept, "cache", "monitoring")
+        if os.path.exists(monitor_cache_dir):
+            for filename in os.listdir(monitor_cache_dir):
+                if filename.endswith(".json"):
+                    filepath = os.path.join(monitor_cache_dir, filename)
+                    try:
+                        os.remove(filepath)
+                        print(f"Deleted monitor cache: {filepath}")
+                    except Exception as e:
+                        print(f"Could not delete {filepath}: {e}")
+    
+    return jsonify({"message": "Monitor cache cleared successfully"})
 
 # ── User management (admin only) ──────────────────────────────
 VALID_ROLES = ["admin", "head", "pm", "hw_tl", "sw_tl", "mfg_tl"]

@@ -94,14 +94,37 @@
   }
 
   // ── Extract data rows ────────────────────────────────────────
-  function extractRows(cells, maxRow) {
+  // SW Head / Admin: all rows
+  // SW TL: rows where their initials are in col C (SWH Head) first,
+  //        if none found there, fall back to col D (SWE Name)
+  function extractRows(cells, maxRow, user) {
+    var role     = user && user.role;
+    var initials = user && user.short_name ? user.short_name.trim().toUpperCase() : "";
+
+    var isHead = (role === "head" || role === "admin");
+
     var rows = [];
     for (var r = DATA_START; r <= maxRow; r++) {
       var id = cv(cells, ID_COL, r);
       if (!id || id.trim() === "") continue; // skip blank rows
       rows.push(r);
     }
-    return rows;
+
+    // Head / Admin sees everything
+    if (isHead) return rows;
+
+    // SW TL: filter by initials — check SWH Head (col C) first
+    var swhRows = rows.filter(function(r) {
+      var val = cv(cells, "C", r).trim().toUpperCase();
+      return val === initials;
+    });
+    if (swhRows.length > 0) return swhRows;
+
+    // Fallback: check SWE Name (col D)
+    return rows.filter(function(r) {
+      var val = cv(cells, "D", r).trim().toUpperCase();
+      return val === initials;
+    });
   }
 
   // ── Escape HTML ──────────────────────────────────────────────
@@ -157,12 +180,12 @@
   }
 
   // ── Main render function ─────────────────────────────────────
-  function renderMonitor(container, data) {
+  function renderMonitor(container, data, user) {
     var cells   = data.cells  || {};
     var maxRow  = data.max_row || 0;
 
     var headerMap = buildHeaderMap(cells);
-    var rows      = extractRows(cells, maxRow);
+    var rows      = extractRows(cells, maxRow, user);
 
     var activeTab = 0; // default: Project Overview
 
