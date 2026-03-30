@@ -17,6 +17,7 @@ from excel_db import (
     get_master_projects,
     get_discipline_dirs,
     OWNER_MAP,
+    update_monitor_timestamp,
 )
 
 app = Flask(__name__, static_folder=None)
@@ -286,6 +287,40 @@ def get_monitor_sheet():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+@app.route("/api/projects/<project_id>/monitor-timestamp", methods=["POST"])
+@login_required
+def save_monitor_timestamp(project_id):
+    """Write the save timestamp into the BA column of the monitor JSON/Excel."""
+    user = get_current_user()
+    role = user["role"]
+
+    data = request.get_json()
+    display_ts = (data or {}).get("timestamp", "")
+
+    # Convert display format "29 Mar 2026, 08:04 PM" -> raw "29-03-2026 20:04:00"
+    # to match the Excel cell format dd-mm-yyyy hh:mm:ss
+    raw_ts = display_ts
+    try:
+        raw_ts = datetime.strptime(display_ts, "%d %b %Y, %I:%M %p").strftime("%d-%m-%Y %H:%M:%S")
+    except Exception:
+        raw_ts = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+
+    ok = update_monitor_timestamp(project_id, raw_ts, role=role)
+    if not ok:
+        # Non-fatal — project may not be in this user's monitor file
+        return jsonify({"message": "Project not found in monitor, skipped"}), 200
+
+    # Patch the in-memory master projects cache in-place so the sidebar
+    # reflects the updated stale status immediately — no disk read needed.
+    cached = _master_projects_cache.get("all_master_projects", [])
+    for entry in cached:
+        if entry.get("file_id") == project_id:
+            entry["stale"] = False
+            break
+
+    return jsonify({"message": "Monitor timestamp updated", "timestamp": raw_ts})
+
 
 @app.route("/api/debug", methods=["GET"])
 @login_required

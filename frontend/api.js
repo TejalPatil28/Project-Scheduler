@@ -22,6 +22,7 @@ const API = {
   getSheet:       (id)         => API.req("GET",  `/projects/${id}/sheet`),
   saveTasks:      (id, updates)=> API.req("PUT",  `/projects/${id}/tasks`, updates),
   setAssignments: (id, data)   => API.req("PUT",  `/projects/${id}/assignments`, data),
+  updateMonitorTimestamp: (id, timestamp) => API.req("POST", `/projects/${id}/monitor-timestamp`, { timestamp }),
 
   getUsers:   ()           => API.req("GET",    "/users"),
   createUser: (data)       => API.req("POST",   "/users", data),

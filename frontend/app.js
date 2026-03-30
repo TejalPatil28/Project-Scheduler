@@ -2086,6 +2086,8 @@ async function saveChanges() {
       if (state.project && state.sheetCache[state.project.id]) {
         state.sheetCache[state.project.id].last_modified = serverTs;
       }
+      // Fire-and-forget: write timestamp to monitor BA column
+      API.updateMonitorTimestamp(state.project.id, serverTs).catch(function() {});
     }
 
     // Invalidate client cache so re-render fetches fresh data from server

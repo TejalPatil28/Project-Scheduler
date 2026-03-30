@@ -6,6 +6,8 @@ import queue
 from openpyxl.utils import get_column_letter as gcl
 import pycel
 from pycel.excelcompiler import ExcelCompiler
+from sysmemory_compute import compute_sysmemory_json, queue_sysmemory_compute
+from openpyxl.styles.numbers import is_date_format
 
 try:
     from pycel.excelcompiler import ExcelCompiler
@@ -708,6 +710,7 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     Bulk update multiple tasks.
     - Updates JSON cache immediately (fast)
     - Queues Excel write for background (slow)
+    - Updates monitor timestamp
     - Regenerates system memory JSON in background
     """
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
@@ -715,32 +718,20 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     # Step 1: Update JSON cache immediately (fast) — returns stamped timestamp
     now_str = _update_sheet_cache(project_id, updates, sched_cache)
 
-    # Step 2: Queue Excel write to background thread
+    # Step 2: Update monitor timestamp with the same timestamp (JSON cache + queue Excel write)
+    if now_str:
+        update_monitor_timestamp(project_id, now_str, role)
+
+    # Step 3: Queue Excel write to background thread
     queue_excel_write(project_id, updates, role)
 
-    # TEMPORARILY DISABLED - System memory JSON generation
-    # Step 3: Regenerate system memory JSON in background
-    # # Get the file path
-    # fpath = os.path.join(projects_dir, project_id + ".xlsx")
-    # if not os.path.exists(fpath):
-    #     fpath = os.path.join(projects_dir, project_id + ".xlsb")
-    # 
-    # # Queue system memory generation to background thread
-    # def regenerate_sysmemory():
-    #     try:
-    #         generate_sysmemory_json(fpath, project_id, sched_cache)
-    #     except Exception as e:
-    #         print(f"System memory regeneration failed for {project_id}: {e}")
-    # 
-    # import threading
-    # sysmemory_thread = threading.Thread(target=regenerate_sysmemory, daemon=True)
-    # sysmemory_thread.start()
-
-    # Step 4: Count how many changes were made
-    updated_count = len(updates)
-
-    return True, f"Updated {updated_count} tasks (Excel syncing in background)", now_str
+    # Step 4: Regenerate sysmemory in background
+    sysmemory_cache = os.path.join(DATA_DIR, ROLE_DISCIPLINE.get(role, "SW"), "cache", "system_memory")
+    queue_sysmemory_compute(project_id, sched_cache, sysmemory_cache)
     
+    updated_count = len(updates)
+    return True, f"Updated {updated_count} tasks (Excel syncing in background)", now_str
+
 def create_user(name, short_name, username, password, role):
     """Add a new user to users.xlsx."""
     import bcrypt
@@ -805,14 +796,15 @@ def get_master_projects(username):
     return filtered
 
 def get_all_monitor_projects(role="sw_tl"):
-    """
-    Get ALL projects from the department monitoring file (unfiltered).
-    Used by head and admin roles.
-    """
+    """Get ALL projects from the department monitoring file (using JSON cache)"""
+    from datetime import date, datetime
+    import json
+    import os
+    
     # Map role to department
     role_to_dept = {
         "sw_tl": "SW",
-        "hw_tl": "HW",
+        "hw_tl": "HW", 
         "mfg_tl": "MFG",
         "pm": "PM",
         "admin": "SW",
@@ -821,28 +813,80 @@ def get_all_monitor_projects(role="sw_tl"):
     
     department = role_to_dept.get(role, "SW")
     
-    # Get the department monitoring file path
-    monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
+    # FIRST: Try to read from JSON cache
+    monitor_cache_path = os.path.join(DATA_DIR, department, "cache", "monitoring", f"{department}_Monitor.json")
     
-    print(f"[get_all_monitor_projects] Looking for: {monitor_path}")
+    if os.path.exists(monitor_cache_path):
+        try:
+            with open(monitor_cache_path, 'r') as f:
+                monitor_data = json.load(f)
+            
+            cells = monitor_data.get('cells', {})
+            results = []
+            today = date.today()
+            
+            # Find all rows with project IDs (column I)
+            for coord, cell_info in cells.items():
+                if coord.startswith('F') and cell_info.get('v'):
+                    row_num = int(coord[1:])
+                    project_id = str(cell_info.get('v')).strip()
+                    
+                    # Only process FSL projects
+                    if not project_id.startswith("FSL"):
+                        continue
+                    
+                    # Get timestamp from column BA
+                    ba_coord = f"BA{row_num}"
+                    timestamp_str = cells.get(ba_coord, {}).get('v')
+                    
+                    # Calculate stale: more than 2 days old
+                    stale = False
+                    if timestamp_str:
+                        try:
+                            # Parse timestamp like "29-03-2026 20:04:00"
+                            last_edited = datetime.strptime(timestamp_str, "%d-%m-%Y %H:%M:%S").date()
+                            stale = (today - last_edited).days > 2
+                            print(f"[Monitor] Project {project_id}: last_edited={last_edited}, stale={stale}")
+                        except Exception as e:
+                            print(f"[Monitor] Could not parse timestamp for {project_id}: {timestamp_str}, error={e}")
+                    
+                    # Normalize project ID for file lookup
+                    normalized_id = "SWESch_" + project_id.replace("/", "_")
+                    file_exists = (os.path.exists(os.path.join(PROJECTS_DIR, normalized_id + ".xlsx")) or
+                                   os.path.exists(os.path.join(PROJECTS_DIR, normalized_id + ".xlsb")))
+                    
+                    # Get SW Head (col C) and SWE Name (col D)
+                    swh_head = cells.get(f"C{row_num}", {}).get('v', '')
+                    swe_name = cells.get(f"D{row_num}", {}).get('v', '')
+                    
+                    results.append({
+                        "project_id": project_id,
+                        "file_id": normalized_id,
+                        "stale": stale,
+                        "file_exists": file_exists,
+                        "swh_head": (swh_head or "").strip().upper(),
+                        "swe_name": (swe_name or "").strip().upper(),
+                    })
+            
+            print(f"[Monitor] Loaded {len(results)} projects from JSON cache")
+            return results
+            
+        except Exception as e:
+            print(f"[Monitor] Error reading from JSON cache: {e}, falling back to Excel")
+    
+    # FALLBACK: Read from Excel if JSON cache doesn't exist
+    monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
+    print(f"[Monitor] Reading from Excel: {monitor_path}")
     
     if not os.path.exists(monitor_path):
-        print(f"[get_all_monitor_projects] File not found: {monitor_path}")
+        print(f"[Monitor] File not found: {monitor_path}")
         return []
     
-    # Read the monitoring file
+    # ... your existing Excel reading code here (the original _read_master_xlsx or _read_master_xlsb) ...
     if monitor_path.endswith(".xlsb"):
-        results = _read_master_xlsb(monitor_path)
+        return _read_master_xlsb(monitor_path)
     else:
-        results = _read_master_xlsx(monitor_path)
-    
-    print(f"[get_all_monitor_projects] Found {len(results)} projects")
-
-    # Print first few project IDs for debugging
-    for i, r in enumerate(results[:5]):
-        print(f"  Project {i}: {r.get('project_id')}")
-    
-    return results
+        return _read_master_xlsx(monitor_path)
 
 def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None):
     """Convert raw col-F / col-BA values into a result dict."""
@@ -1461,44 +1505,52 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
         "last_modified":  last_modified_str,
     }
 
-    # Write JSON sidecar cache for fast future loads
+        # Write JSON sidecar cache for fast future loads
     _write_sheet_cache(project_id, result, sched_cache)
-    # Generate system memory JSON on initial load (if not from cache)
-    #if not cached:
-    #    try:
-    #       generate_sysmemory_json(filepath, project_id, sched_cache)
-    #   except Exception as e:
-    #        print(f"System memory generation failed on initial load for {project_id}: {e}")
     
+    # Generate system memory JSON when sheet cache is first created
+    if not cached:  # This means we just created a new cache
+        try:
+            from sysmemory_compute import compute_sysmemory_json
+            
+            # Get the sheet data we just wrote
+            sheet_data = _read_sheet_cache(project_id, sched_cache)
+            if sheet_data:
+                # Determine the system memory cache directory
+                # sched_cache is like: data/SW/cache/schedules
+                # We want: data/SW/cache/system_memory
+                sysmemory_cache = os.path.join(os.path.dirname(sched_cache), "system_memory") if sched_cache else None
+                if not sysmemory_cache:
+                    # Fallback: derive from PROJECTS_DIR
+                    base_dir = os.path.dirname(PROJECTS_DIR)
+                    sysmemory_cache = os.path.join(base_dir, "cache", "system_memory")
+                
+                compute_sysmemory_json(project_id, sheet_data, sysmemory_cache)
+                print(f"[Auto] System memory JSON created for {project_id}")
+        except Exception as e:
+            print(f"[Auto] Failed to create system memory JSON for {project_id}: {e}")
     
     return result
 
 def get_monitor_sheet_data(filepath, monitor_type="SW"):
     """
     Read monitoring file without PyCel, just basic cell values.
-    - Columns: A to BW only (ignore BX onwards)
-    - Rows 1-9: skipped (useless)
-    - Row 10: always kept (header)
-    - Row 11: skipped (ignorable)
-    - Rows 12+: kept only if at least one cell has a value
-    - Empty cells in kept rows are not stored
     Creates JSON cache for fast subsequent loads.
     """
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
-    from openpyxl.utils import column_index_from_string as col2idx
     from datetime import datetime, date, time
     import json
     import os
-
-    # Define cache path
+    
+        # Define cache path
     # filepath is: .../data/SW/SW_Monitor.xlsx
     # We want: .../data/SW/cache/monitoring/SW_Monitor.json
     base_dir = os.path.dirname(filepath)  # .../data/SW
     cache_dir = os.path.join(base_dir, "cache", "monitoring")
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{monitor_type}_Monitor.json")
-
+    
     # Return cache if exists
     if os.path.exists(cache_path):
         try:
@@ -1506,86 +1558,54 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
                 return json.load(f)
         except Exception as e:
             print(f"Error reading monitor cache: {e}")
-
-    # Column limits: A=1, BW=75
-    MAX_COL_IDX = col2idx("BW")  # 75
-    cols = [gcl(i) for i in range(1, MAX_COL_IDX + 1)]
-
+    
     # Read Excel file
     wb = load_workbook(filepath, data_only=True)
     ws = wb.active
     max_row = ws.max_row
-
-    def _fmt(v):
-        """Format cell value for JSON serialization."""
-        if isinstance(v, datetime):
-            return v.strftime("%d-%b-%y")
-        if isinstance(v, date):
-            return v.strftime("%d-%b-%y")
-        if isinstance(v, time):
-            return v.strftime("%H:%M")
-        return v
-
+    max_col = ws.max_column
+    
+    # Get all columns (A, B, C, ... up to max_col)
+    cols = [gcl(i) for i in range(1, max_col + 1)]
+    
+    # Read cells
     cells = {}
-    kept_rows = []
-
-    for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=MAX_COL_IDX):
-        row_num = row[0].row
-
-        # Skip rows 1-9 and row 11
-        if row_num <= 9 or row_num == 11:
-            continue
-
-        # Row 10 = header, always keep
-        if row_num == 10:
-            for cell in row:
-                v = _fmt(cell.value)
-                if v is not None and str(v).strip() != "":
-                    cells[cell.coordinate] = {"v": v}
-            kept_rows.append(row_num)
-            continue
-
-        # Rows 12+: skip junk formula rows, only keep real project rows (FSL in col B)
-        col_b = ws.cell(row=row_num, column=2).value
-        if not col_b or 'FSL' not in str(col_b):
-            continue
-
-        # Only keep if at least one cell has a value
-        row_cells = {}
-        has_value = False
+    for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
         for cell in row:
-            v = _fmt(cell.value)
-            if v is not None and str(v).strip() != "":
-                row_cells[cell.coordinate] = {"v": v}
-                has_value = True
-
-        if has_value:
-            cells.update(row_cells)
-            kept_rows.append(row_num)
-
+            v = cell.value
+            # Handle datetime
+            if isinstance(v, datetime):
+                v = v.strftime("%d-%b-%y")
+            # Handle date (without time)
+            elif isinstance(v, date):
+                v = v.strftime("%d-%b-%y")
+            # Handle time (without date)
+            elif isinstance(v, time):
+                v = v.strftime("%H:%M")
+            # Keep other values as they are
+            cells[cell.coordinate] = {"v": v}
+    
     result = {
-        "cells":         cells,
-        "col_widths":    {col: 64 for col in cols},
-        "row_heights":   {str(r): 20 for r in kept_rows},
-        "max_row":       max(kept_rows) if kept_rows else 0,
-        "max_col":       MAX_COL_IDX,
-        "cols":          cols,
-        "kept_rows":     kept_rows,   # frontend can use this to know exact rows to render
-        "col_groups":    [],
+        "cells": cells,
+        "col_widths": {col: 64 for col in cols},
+        "row_heights": {str(r): 20 for r in range(1, max_row + 1)},
+        "max_row": max_row,
+        "max_col": max_col,
+        "cols": cols,
+        "col_groups": [],
         "editable_fill": None,
         "project_banner": {},
-        "info_rows":     [],
-        "header_rows":   [10],
-        "left_panel":    {},
+        "info_rows": [],
+        "header_rows": [],
+        "left_panel": {},
         "last_modified": None
     }
-
+    
     # Write cache
     with open(cache_path, 'w') as f:
         json.dump(result, f)
-
+    
     wb.close()
-    print(f"[Monitor] Cached {len(cells)} cells across {len(kept_rows)} rows (cols A-BW)")
     return result
     
 def generate_sysmemory_json(filepath, project_id, sched_cache=None):
@@ -1747,6 +1767,8 @@ def _start_background_worker():
 def _do_excel_write(project_id, updates, role):
     """Actually write to Excel file (this is the slow part)"""
     from openpyxl import load_workbook
+    from openpyxl.styles.numbers import is_date_format
+    from datetime import datetime as _dt, timedelta
     import os
     
     projects_dir, _, _, _ = get_discipline_dirs(role)
@@ -1759,8 +1781,37 @@ def _do_excel_write(project_id, updates, role):
             return
     
     # Load workbook
-    wb = load_workbook(fpath)
+    wb = load_workbook(fpath, keep_links=False)
     ws = wb.active
+
+    # Fix openpyxl bug: integer values in date-formatted cells cause 'int has no attr year'
+    # Scan ALL cells and fix any ints in date-formatted cells
+    for row in ws.iter_rows():
+        for cell in row:
+            # Check if cell has an integer value and date format
+            if isinstance(cell.value, int) and cell.number_format:
+                try:
+                    if is_date_format(cell.number_format):
+                        # Convert Excel serial date integer to Python datetime
+                        try:
+                            # Excel serial date: 1 = 1900-01-01
+                            # openpyxl uses 1899-12-30 as epoch
+                            from openpyxl.utils.datetime import from_excel
+                            cell.value = from_excel(cell.value)
+                        except Exception:
+                            # Fallback manual conversion
+                            epoch = _dt(1899, 12, 30)
+                            cell.value = epoch + timedelta(days=cell.value)
+                except Exception:
+                    pass
+            # Also handle float dates that might be integers
+            elif isinstance(cell.value, float) and cell.number_format:
+                try:
+                    if is_date_format(cell.number_format) and cell.value > 1:
+                        from openpyxl.utils.datetime import from_excel
+                        cell.value = from_excel(cell.value)
+                except Exception:
+                    pass
     
     # Apply updates
     row_updates = {u["_row"]: u for u in updates if "_row" in u}
@@ -1802,6 +1853,17 @@ def _do_excel_write(project_id, updates, role):
                         ws[f"Y{row}"] = u["actual_end"]
                     ws[f"AF{row}"] = u.get("remark") or ""
     
+    # One more pass to catch any remaining ints in date cells before saving
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, int) and cell.number_format:
+                try:
+                    if is_date_format(cell.number_format):
+                        from openpyxl.utils.datetime import from_excel
+                        cell.value = from_excel(cell.value)
+                except Exception:
+                    pass
+    
     # Save workbook
     wb.save(fpath)
     print(f"[Background] Excel file saved: {fpath}")
@@ -1810,3 +1872,109 @@ def queue_excel_write(project_id, updates, role):
     """Queue a project for background Excel write"""
     _start_background_worker()  # Ensure worker is running
     _excel_write_queue.put((project_id, updates, role))
+
+def _do_monitor_excel_write(department, updates):
+    """Write monitor cache updates to actual Excel file in background"""
+    import os
+    from openpyxl import load_workbook
+
+    
+    monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
+    
+    if not os.path.exists(monitor_path):
+        print(f"[Monitor Background] File not found: {monitor_path}")
+        return
+    
+    try:
+        # Load workbook
+        wb = load_workbook(monitor_path)
+        ws = wb["SWMon"] if "SWMon" in wb.sheetnames else wb.active
+        
+        # Apply updates
+        for coord, value in updates.items():
+            if value is not None:
+                ws[coord] = value
+        
+        # Save workbook
+        wb.save(monitor_path)
+        print(f"[Monitor Background] Excel saved: {monitor_path}")
+        
+    except Exception as e:
+        print(f"[Monitor Background] Error writing to Excel: {e}")
+
+
+def queue_monitor_excel_write(department, updates):
+    """Queue monitor Excel write to background thread"""
+    import threading
+    
+    def _run():
+        _do_monitor_excel_write(department, updates)
+    
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+
+def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
+    """Update the BA column timestamp for a project in monitor JSON cache and queue Excel write"""
+    from datetime import datetime
+    import json
+    import os
+    
+    # Map role to department
+    role_to_dept = {
+        "sw_tl": "SW",
+        "hw_tl": "HW", 
+        "mfg_tl": "MFG",
+        "pm": "PM",
+        "admin": "SW",
+        "head": "SW"
+    }
+    
+    department = role_to_dept.get(role, "SW")
+    monitor_cache_dir = os.path.join(DATA_DIR, department, "cache", "monitoring")
+    monitor_cache_path = os.path.join(monitor_cache_dir, f"{department}_Monitor.json")
+    
+    if not os.path.exists(monitor_cache_path):
+        print(f"[Monitor] Cache not found: {monitor_cache_path}")
+        return False
+    
+    try:
+        # Load monitor cache
+        with open(monitor_cache_path, 'r') as f:
+            monitor_data = json.load(f)
+        
+        cells = monitor_data.get('cells', {})
+        
+        # Find the row with matching project ID in COLUMN B
+        found_row = None
+        for coord, cell_info in cells.items():
+            if coord.startswith('B') and cell_info.get('v') == project_id:
+                found_row = int(coord[1:])
+                break
+        
+        if found_row:
+            # Update column BA in cache
+            ba_coord = f"BA{found_row}"
+            if ba_coord not in cells:
+                cells[ba_coord] = {}
+            
+            cells[ba_coord]['v'] = timestamp
+            cells[ba_coord]['updated'] = True
+            
+            # Write back to JSON cache
+            with open(monitor_cache_path, 'w') as f:
+                json.dump(monitor_data, f, indent=2)
+            
+            print(f"[Monitor] Updated cache for {project_id} at row {found_row}: {timestamp}")
+            
+            # Queue Excel write to background
+            queue_monitor_excel_write(department, {ba_coord: timestamp})
+            
+            return True
+        else:
+            print(f"[Monitor] Project {project_id} not found in monitor cache (searched column F)")
+            return False
+            
+    except Exception as e:
+        print(f"[Monitor] Failed to update timestamp: {e}")
+        return False
