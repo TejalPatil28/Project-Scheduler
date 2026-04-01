@@ -17,6 +17,33 @@ except ImportError:
     PY_CEL_AVAILABLE = False
     print("PyCel not installed, falling back to openpyxl only")
 
+def safe_load_workbook(filepath, data_only=True):
+    """Safely load an Excel workbook with error handling for corrupted files"""
+    import os
+    from openpyxl import load_workbook
+    
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+    
+    try:
+        if os.path.getsize(filepath) == 0:
+            raise ValueError(f"File is empty: {filepath}")
+    except OSError:
+        pass
+    
+    try:
+        # Try normal load first
+        return load_workbook(filepath, data_only=data_only)
+    except EOFError:
+        print(f"EOFError loading {filepath}, trying recovery mode...")
+        try:
+            # Try read-only mode
+            wb = load_workbook(filepath, read_only=True, data_only=data_only)
+            # If successful, close it and try normal load again
+            wb.close()
+            return load_workbook(filepath, data_only=data_only)
+        except Exception as e:
+            raise Exception(f"Cannot load corrupted file {filepath}: {e}")
 
 # ── Paths ──────────────────────────────────────────────────────
 BASE_DIR        = os.path.dirname(__file__)
@@ -723,12 +750,10 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
         update_monitor_timestamp(project_id, now_str, role)
 
     # Step 3: Queue Excel write to background thread
+    # Sysmemory is read inside _do_excel_write after save completes,
+    # so it always runs after the Excel write is fully done.
     queue_excel_write(project_id, updates, role)
 
-    # Step 4: Regenerate sysmemory in background
-    sysmemory_cache = os.path.join(DATA_DIR, ROLE_DISCIPLINE.get(role, "SW"), "cache", "system_memory")
-    queue_sysmemory_compute(project_id, sched_cache, sysmemory_cache)
-    
     updated_count = len(updates)
     return True, f"Updated {updated_count} tasks (Excel syncing in background)", now_str
 
@@ -1560,7 +1585,12 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
             print(f"Error reading monitor cache: {e}")
     
     # Read Excel file
-    wb = load_workbook(filepath, data_only=True)
+        # Read Excel file using safe loader
+    try:
+        wb = safe_load_workbook(filepath, data_only=True)
+    except Exception as e:
+        print(f"Error loading monitor file {filepath}: {e}")
+        return None
     ws = wb.active
     max_row = ws.max_row
     max_col = ws.max_column
@@ -1736,6 +1766,12 @@ def delete_user(username):
 _excel_write_queue = queue.Queue()
 _background_thread_started = False
 
+# Dedicated queue + worker for monitor Excel writes — prevents race conditions
+# when multiple saves happen close together (each used to spin a new thread,
+# causing one thread to open the file while another was mid-write → EOFError)
+_monitor_write_queue = queue.Queue()
+_monitor_thread_started = False
+
 def _start_background_worker():
     """Start a background thread that processes Excel writes"""
     global _background_thread_started
@@ -1853,12 +1889,33 @@ def _do_excel_write(project_id, updates, role):
                         ws[f"Y{row}"] = u["actual_end"]
                     ws[f"AF{row}"] = u.get("remark") or ""
     
-    # One more pass to catch any remaining ints in date cells before saving
+        # One more pass to catch any remaining ints in date cells before saving
     for row in ws.iter_rows():
         for cell in row:
-            if isinstance(cell.value, int) and cell.number_format:
+            # Check if cell has date format
+            is_date_fmt = False
+            try:
+                if cell.number_format:
+                    is_date_fmt = is_date_format(cell.number_format)
+            except Exception:
+                pass
+            
+            # Fix integer in date-formatted cell
+            if is_date_fmt and isinstance(cell.value, int):
                 try:
-                    if is_date_format(cell.number_format):
+                    from openpyxl.utils.datetime import from_excel
+                    # Convert Excel serial date to datetime
+                    if 1 <= cell.value <= 2958465:  # Valid Excel date range
+                        cell.value = from_excel(cell.value)
+                except Exception as e:
+                    print(f"[Background] Could not convert int {cell.value} to date at {cell.coordinate}: {e}")
+                    # If conversion fails, set to None to avoid error
+                    cell.value = None
+            
+            # Also fix float that might be date serial
+            elif is_date_fmt and isinstance(cell.value, float):
+                try:
+                    if cell.value > 1 and cell.value < 100000:
                         from openpyxl.utils.datetime import from_excel
                         cell.value = from_excel(cell.value)
                 except Exception:
@@ -1867,6 +1924,152 @@ def _do_excel_write(project_id, updates, role):
     # Save workbook
     wb.save(fpath)
     print(f"[Background] Excel file saved: {fpath}")
+
+    # Read sysmemory from the just-saved Excel file (data_only=True).
+    # Runs in the same background thread so it always happens after the
+    # Excel write is fully complete. Multiple saves are serialised by the
+    # queue, so a second save waits its turn before its sysmemory is read.
+    try:
+        _read_sysmemory_from_excel(project_id, fpath, role)
+    except Exception as e:
+        print(f"[Background] Sysmemory read failed for {project_id}: {e}")
+
+
+def _read_sysmemory_from_excel(project_id, fpath, role):
+    """
+    Evaluate sysmemory columns from the Excel file using Pycel (formula-aware)
+    and write results to the sysmemory JSON cache.
+
+    Called from _do_excel_write after the Excel save is fully complete so that
+    Pycel always sees the latest written values.
+
+    Column scope:
+      - Rows 1–7  : DF, DG only (summary/header values)
+      - Rows 8–55 : CY, CZ, DA, DB, DC, DD, DF, DG, DH (all computed task cols)
+
+    Sheet name:
+      - SW discipline → always "PrjSch"
+      - Other disciplines (HW, MFG, PM) → detected from wb.active at runtime
+    """
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    try:
+        from pycel.excelcompiler import ExcelCompiler
+    except ImportError:
+        print("[Sysmemory] Pycel not installed — skipping sysmemory compute.")
+        return
+
+    # Determine which sheet to evaluate against
+    discipline = ROLE_DISCIPLINE.get(role, "SW")
+    if discipline == "SW":
+        sheet_name = "PrjSch"
+    else:
+        # Detect active sheet name dynamically for other departments
+        try:
+            from openpyxl import load_workbook as _lw
+            _wb = _lw(fpath, read_only=True)
+            sheet_name = _wb.active.title
+            _wb.close()
+        except Exception:
+            sheet_name = "PrjSch"  # safe fallback
+
+    # Rows 1-7: only DE and DF (DE2 is explicitly skipped)
+    HEADER_COLS = ["DE", "DF"]
+
+    # Rows 8-55: task cols — no DE, DG used instead
+    TASK_COLS = ["CY", "CZ", "DA", "DB", "DC", "DD", "DF", "DG", "DH", "DI", "DJ"]
+
+    # Percentage cells: raw 0.0-1.0 float → converted to 0-100
+    PCT_CELLS = {
+        ("DF", 1),   # DF1 — project completion %
+        ("DE", 3),   # DE3 — SW completion %
+        ("DF", 3),   # DF3 — Mfg completion %
+    }
+    # DB column (Exptd%) in task rows is also 0-1 float — handled inline
+
+    print(f"[Sysmemory] Compiling {fpath} with Pycel (sheet: {sheet_name})...")
+    try:
+        excel = ExcelCompiler(filename=fpath)
+    except Exception as e:
+        print(f"[Sysmemory] Pycel compile failed for {project_id}: {e}")
+        return
+
+    # Excel date serial range — Pycel sometimes returns integers instead of
+    # datetime objects when evaluating date formulas. We detect and convert them.
+    _EXCEL_DATE_MIN = 30000   # ~1982
+    _EXCEL_DATE_MAX = 100000  # ~2173
+
+    def _excel_serial_to_str(v):
+        """Convert an Excel date serial integer/float to a date string."""
+        try:
+            from openpyxl.utils.datetime import from_excel
+            dt = from_excel(int(v))
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
+    def _evaluate(col, row):
+        """Evaluate a single cell; return None on any error.
+        DE2 is always skipped — do not evaluate or process it."""
+        if col == "DE" and row == 2:
+            return None
+        try:
+            v = excel.evaluate(f"{sheet_name}!{col}{row}")
+            # Handle datetime/date objects
+            if isinstance(v, datetime):
+                return v.strftime("%Y-%m-%d %H:%M:%S")
+            if isinstance(v, date):
+                return v.strftime("%Y-%m-%d")
+            if isinstance(v, (int, float)):
+                # Detect Excel date serial numbers returned by Pycel
+                if _EXCEL_DATE_MIN <= v <= _EXCEL_DATE_MAX:
+                    converted = _excel_serial_to_str(v)
+                    if converted:
+                        return converted
+                # Percentage conversion for known cells
+                if (col, row) in PCT_CELLS or col == "DB":
+                    return round(float(v) * 100, 2)
+            return v
+        except Exception:
+            return None
+
+    rows = {}
+
+    # Rows 1-7: only DE and DF; DE2 is silently skipped inside _evaluate
+    for row in range(1, 8):
+        row_data = {col: _evaluate(col, row) for col in HEADER_COLS}
+        rows[str(row)] = row_data
+
+    # Row 8: label/header row
+    rows["8"] = {col: _evaluate(col, 8) for col in TASK_COLS}
+
+    # Rows 9-55: task rows — no DE
+    for row in range(9, 56):
+        row_data = {col: _evaluate(col, row) for col in TASK_COLS}
+        rows[str(row)] = row_data
+
+    # Persist to JSON cache
+    sysmemory_cache = os.path.join(
+        DATA_DIR, discipline, "cache", "system_memory"
+    )
+    os.makedirs(sysmemory_cache, exist_ok=True)
+    sysmemory_path = os.path.join(sysmemory_cache, f"{project_id}_sysmemory.json")
+
+    sysmemory_data = {
+        "project_id":   project_id,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sheet":        sheet_name,
+        "header_cols":  HEADER_COLS,
+        "task_cols":    TASK_COLS,
+        "rows":         rows,
+    }
+
+    with open(sysmemory_path, "w") as f:
+        json.dump(sysmemory_data, f, indent=2)
+
+    print(f"[Sysmemory] Written: {sysmemory_path}")
+
 
 def queue_excel_write(project_id, updates, role):
     """Queue a project for background Excel write"""
@@ -1877,7 +2080,9 @@ def _do_monitor_excel_write(department, updates):
     """Write monitor cache updates to actual Excel file in background"""
     import os
     from openpyxl import load_workbook
-
+    from openpyxl.styles.numbers import is_date_format as _is_date_fmt
+    from openpyxl.utils.datetime import from_excel as _from_excel
+    from datetime import datetime as _dt
     
     monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
     
@@ -1885,33 +2090,113 @@ def _do_monitor_excel_write(department, updates):
         print(f"[Monitor Background] File not found: {monitor_path}")
         return
     
+    # Check if file is empty or corrupted
     try:
-        # Load workbook
-        wb = load_workbook(monitor_path)
+        if os.path.getsize(monitor_path) == 0:
+            print(f"[Monitor Background] File is empty: {monitor_path}")
+            return
+    except OSError as e:
+        print(f"[Monitor Background] Cannot check file size: {e}")
+        return
+    
+    try:
+        # Load workbook with error handling
+        try:
+            wb = load_workbook(monitor_path, data_only=True)
+        except EOFError:
+            print(f"[Monitor Background] EOFError - file may be corrupted: {monitor_path}")
+            # Try to recover by loading in read-only mode first
+            try:
+                wb = load_workbook(monitor_path, read_only=True, data_only=True)
+                wb.close()  # Just to check if readable
+                # If readable, try normal load again
+                wb = load_workbook(monitor_path, data_only=True)
+            except Exception as e2:
+                print(f"[Monitor Background] Cannot recover corrupted file: {e2}")
+                return
+        
         ws = wb["SWMon"] if "SWMon" in wb.sheetnames else wb.active
-        
-        # Apply updates
+
         for coord, value in updates.items():
-            if value is not None:
-                ws[coord] = value
-        
+            if value is None:
+                continue
+            cell = ws[coord]
+
+            # FIX: Handle integer values in date-formatted cells BEFORE assignment
+            # This prevents the 'int has no attribute year' error
+            cell_is_date_fmt = False
+            try:
+                if cell.number_format:
+                    cell_is_date_fmt = _is_date_fmt(cell.number_format)
+            except Exception:
+                pass
+
+            # If cell has date format and value is integer, convert to datetime
+            if cell_is_date_fmt and isinstance(value, int):
+                try:
+                    # Convert Excel serial date integer to datetime
+                    if 1 <= value <= 2958465:  # Valid Excel date range
+                        value = _from_excel(value)
+                except Exception as e:
+                    print(f"[Monitor Background] Could not convert int {value} to date: {e}")
+                    # Keep as is and let openpyxl handle (might still error)
+            
+            # Handle string timestamps
+            if cell_is_date_fmt and isinstance(value, str):
+                for fmt in ("%d-%m-%Y %H:%M:%S", "%d %b %Y, %I:%M %p",
+                            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        value = _dt.strptime(value, fmt)
+                        break
+                    except ValueError:
+                        continue
+
+            cell.value = value
+
         # Save workbook
         wb.save(monitor_path)
         print(f"[Monitor Background] Excel saved: {monitor_path}")
-        
+
     except Exception as e:
+        import traceback
         print(f"[Monitor Background] Error writing to Excel: {e}")
+        traceback.print_exc()
+
+def _start_monitor_worker():
+    """Start a single persistent background thread for monitor Excel writes.
+    Using a queue (not a new thread per write) prevents the race condition where
+    two near-simultaneous writes both try to open the file — which caused
+    EOFError / 'File is not a zip file' because one thread read a half-written file."""
+    global _monitor_thread_started
+    if _monitor_thread_started:
+        return
+
+    def worker():
+        while True:
+            try:
+                department, updates = _monitor_write_queue.get(timeout=1)
+                try:
+                    _do_monitor_excel_write(department, updates)
+                except Exception as e:
+                    print(f"[Monitor Background] Worker error: {e}")
+                finally:
+                    _monitor_write_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[Monitor Background] Worker fatal error: {e}")
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    _monitor_thread_started = True
+    print("[Monitor Background] Monitor write worker started")
 
 
 def queue_monitor_excel_write(department, updates):
-    """Queue monitor Excel write to background thread"""
-    import threading
-    
-    def _run():
-        _do_monitor_excel_write(department, updates)
-    
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    """Queue a monitor Excel write to the single persistent background worker.
+    Never spawns a new thread — all writes are serialised through the queue."""
+    _start_monitor_worker()
+    _monitor_write_queue.put((department, updates))
 
 
 def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
