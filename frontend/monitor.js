@@ -40,6 +40,9 @@
   // Free-text editable columns
   var TEXT_EDIT_COLS = ["AR"];
 
+  // Date picker columns
+  var DATE_EDIT_COLS = ["E"];
+
   // Milestone progress columns (0–100 bar)
   var MILESTONE_COLS = [
     "BB","BC","BD","BE","BF","BG","BH","BI","BJ","BK",
@@ -80,9 +83,9 @@
       _default: "5%",
       "F": "15%",
       "C": "4%", "D": "4%", "E": "6%", "G": "5%",
-      "H": "4%", "I": "5%", "J": "5%", "K": "5%", "L": "5%",
+      "H": "4%", "I": "8%", "J": "5%", "K": "10%", "L": "10%",
       "M": "5%", "N": "6%", "O": "5%",
-      "P": "5%", "Q": "5%", "R": "5%", "S": "5%", "T": "5%",
+      "P": "5%", "Q": "5%", "R": "5%", "S": "10%", "T": "5%",
       "U": "5%", "V": "5%", "W": "5%", "X": "5%", "Y": "5%",
       "AG": "5%", "AH": "4%", "AI": "4%",
       "AJ": "5%", "AK": "5%", "AL": "5%", "AM": "6%",
@@ -144,13 +147,41 @@
       .replace(/"/g, "&quot;");
   }
 
+  // In monitor.js, modify the saveCell function or add an API call
+
+  function saveMonitorCell(col, row, value) {
+      // Call backend API to save
+      fetch('/api/monitor/cell', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ col: col, row: row, value: value }),
+          credentials: 'include'
+      })
+      .then(response => response.json())
+      .then(data => {
+          if (data.error) {
+              console.error('Save failed:', data.error);
+          } else {
+              console.log('Saved:', data);
+          }
+      })
+      .catch(err => console.error('Error saving monitor cell:', err));
+  }
+
   // ── Save helper ───────────────────────────────────────────────
   function saveCell(col, row, value) {
-    if (typeof window.__monitorSaveCell === "function") {
-      window.__monitorSaveCell(col, row, value);
-    } else {
-      console.warn("[monitor] window.__monitorSaveCell not defined — col=" + col + " row=" + row + " val=" + value);
-    }
+      // Check if this is monitor context (no project_id)
+      if (typeof window.__monitorSaveCell === "function") {
+          window.__monitorSaveCell(col, row, value);
+      } else {
+          // Fallback to direct API call
+          fetch('/api/monitor/cell', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ col: col, row: row, value: value }),
+              credentials: 'include'
+          }).catch(err => console.error('Save failed:', err));
+      }
   }
 
   // ── Build header map from row 10 ─────────────────────────────
@@ -203,6 +234,42 @@
     });
     return vals.sort();
   }
+
+    // ── Collect all unique SW_TL values from monitor data column D ────
+  function collectMonitorTLValues(cells, allRows) {
+    var seen = {};
+    var vals = [];
+    allRows.forEach(function (r) {
+      var v = cv(cells, "D", r).trim();
+      if (v && !seen[v]) { seen[v] = true; vals.push(v); }
+    });
+    return vals.sort();
+  }
+
+  // ── Calculate column sums for monitor ──
+function calculateColumnSums(cells, rows, cols) {
+  var sums = {
+    "M": 0,
+    "Y": 0,
+    "AH": 0,
+    "AI": 0,
+    "AJ":0,
+    "R":0
+  };
+  
+  rows.forEach(function(row) {
+    // For each column we want to sum
+    for (var col in sums) {
+      var val = cv(cells, col, row);
+      var num = parseFloat(val);
+      if (!isNaN(num)) {
+        sums[col] += num;
+      }
+    }
+  });
+  
+  return sums;
+}
 
   // ── col → groupIndex lookup ──────────────────────────────────
   function buildColToGroup(colGroups) {
@@ -350,7 +417,7 @@
     // ── ROW 1: Group button row ───────────────────────────────
     if (colGroups && colGroups.length) {
       html += '<tr class="mgrp-btn-row" style="height:24px;">';
-      html += '<th class="monitor-th monitor-th-num" rowspan="2">#</th>';
+      html += '<th class="monitor-th monitor-th-num" rowspan="3">#</th>';
 
       var ci = 0;
       while (ci < cols.length) {
@@ -384,11 +451,42 @@
       html += '</tr>';
     }
 
+
+  // ========== ADD THIS NEW ROW HERE ==========
+    // ── ROW 1.5: Sum row (only for overview tab) ──────────────
+    var isOverview = (tab.id === "overview");
+    if (isOverview) {
+      // Calculate sums for columns M, Y, AH, AI
+      var sums = calculateColumnSums(cells, rows, cols);
+      
+      // Start the sum row
+      html += '<tr style="background:var(--bg4);">';
+      
+      
+      // Loop through each column to add sum values
+      cols.forEach(function(col) {
+        if (hidden(col)) return;
+        
+        // Check if this column should show a sum
+        if (col === "M" || col === "Y" || col === "AH" || col === "AI" || col === "AJ" || col === "R") {
+          var sumValue = sums[col] || 0;
+          var bgColor = isDark ? "#4a4a4a" : "#818181";
+          var textColor = "#ffffff";
+          var borderColor = isDark ? "#666666" : "#555555";
+          html += '<th class="monitor-th" style="background:' + bgColor + ';color:' + textColor + ';font-weight:700;text-align:center;border-bottom:2px solid ' + borderColor + ';">' + sumValue.toFixed(2) + '</th>';
+        } else {
+          // Empty cell for non-sum columns
+          html += '<th class="monitor-th" style="background:var(--bg4);"></th>';
+        }
+      });
+      
+      html += '</tr>';
+    }
+    // ========== END OF SUM ROW ==========
+
     // ── ROW 2: Column name row ────────────────────────────────
     html += '<tr>';
-    if (!colGroups || !colGroups.length) {
-      html += '<th class="monitor-th monitor-th-num">#</th>';
-    }
+    
     cols.forEach(function (col) {
       if (hidden(col)) return;
       var gi = colToGroup[col];
@@ -428,9 +526,141 @@
           var styleAttr = style ? ' style="' + style + '"' : "";
           var cellContent = "";
 
+          // ── MONITOR SCREEN EDITABLE COLUMNS (Role-based) ──
+          // This block runs for all tabs EXCEPT milestone (overview, team)
+          var userRole = (user && user.role) || "";
+          var isMonitorTab = (tab.id !== "milestone");
+
+          if (isMonitorTab) {
+            
+            // ── COLUMN C: SW Head (editable by HEAD only) ──
+            if (col === "C" && userRole === "head") {
+              var tlValues = collectMonitorTLValues(cells, allRows);
+              var ocC = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
+              cellContent = '<select style="' + inputBase + ';cursor:pointer;" onchange="' + ocC + '" onclick="event.stopPropagation()">';
+              cellContent += '<option value="">—</option>';
+              if (val && tlValues.indexOf(val) === -1) {
+                cellContent += '<option value="' + esc(val) + '" selected>' + esc(val) + '</option>';
+              }
+              tlValues.forEach(function (v) {
+                cellContent += '<option value="' + esc(v) + '"' + (v === val ? " selected" : "") + '>' + esc(v) + '</option>';
+              });
+              cellContent += '</select>';
+            }
+            
+            // ── COLUMN D: SWE Name (editable by SW_TL only) ──
+            else if (col === "D" && userRole === "sw_tl") {
+              var tlValues2 = collectMonitorTLValues(cells, allRows);
+              var ocD = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
+              cellContent = '<select style="' + inputBase + ';cursor:pointer;" onchange="' + ocD + '" onclick="event.stopPropagation()">';
+              cellContent += '<option value="">—</option>';
+              if (val && tlValues2.indexOf(val) === -1) {
+                cellContent += '<option value="' + esc(val) + '" selected>' + esc(val) + '</option>';
+              }
+              tlValues2.forEach(function (v) {
+                cellContent += '<option value="' + esc(v) + '"' + (v === val ? " selected" : "") + '>' + esc(v) + '</option>';
+              });
+              cellContent += '</select>';
+            }
+            
+            // ── COLUMN E: Date field (editable by SW_TL only) ──
+            else if (col === "E" && userRole === "sw_tl") {
+              var dateVal = val || "";
+              var dateInputVal = "";
+              if (dateVal) {
+                try {
+                  var d = new Date(dateVal);
+                  if (!isNaN(d)) dateInputVal = d.toISOString().split("T")[0];
+                } catch(e) {}
+              }
+              var ocDate = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
+              cellContent = '<input type="date" style="' + inputBase + ';cursor:text;" value="' + dateInputVal + '" onchange="' + ocDate + '" onclick="event.stopPropagation()" />';
+            }
+            
+            // ── COLUMN N: Project Type dropdown (editable by SW_TL only) ──
+            else if (col === "N" && userRole === "sw_tl") {
+              var optsN = ["", "SYSTEM", "SERVICE", "E & C"];
+              var ocN = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
+              cellContent = '<select style="' + inputBase + ';cursor:pointer;" onchange="' + ocN + '" onclick="event.stopPropagation()">';
+              var valInOpts = optsN.indexOf(val) !== -1;
+              if (val && !valInOpts) {
+                cellContent += '<option value="' + esc(val) + '" selected>' + esc(val) + '</option>';
+              }
+              optsN.forEach(function (opt) {
+                var sel = (opt === val) ? " selected" : "";
+                cellContent += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt || "—") + '</option>';
+              });
+              cellContent += '</select>';
+            }
+            
+            // ── COLUMN AP: Status dropdown (editable by SW_TL only) ──
+            else if (col === "AP" && userRole === "sw_tl") {
+              var optsAP = ["", "RUN", "HOLD", "CLOSED"];
+              var ocAP = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
+              cellContent = '<select style="' + inputBase + ';cursor:pointer;" onchange="' + ocAP + '" onclick="event.stopPropagation()">';
+              var valInOptsAP = optsAP.indexOf(val) !== -1;
+              if (val && !valInOptsAP) {
+                cellContent += '<option value="' + esc(val) + '" selected>' + esc(val) + '</option>';
+              }
+              optsAP.forEach(function (opt) {
+                var sel = (opt === val) ? " selected" : "";
+                cellContent += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt || "—") + '</option>';
+              });
+              cellContent += '</select>';
+            }
+            
+            // ── COLUMN AR: Remarks text field (editable by SW_TL only) ──
+            else if (col === "AR" && userRole === "sw_tl") {
+              var ocAR = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
+              cellContent = '<input type="text" value="' + esc(val) + '" '
+                + 'style="' + inputBase + ';cursor:text;" '
+                + 'onchange="' + ocAR + '" '
+                + 'onclick="event.stopPropagation()" '
+                + 'placeholder="—" />';
+            }
+            
+            // ── For all other columns in monitor tab, show formatted text ──
+            else {
+              var displayValue = val;
+              
+              // Column M: 2 decimal places
+              if (col === "M") {
+                var numM = parseFloat(val);
+                if (!isNaN(numM)) {
+                  displayValue = numM.toFixed(2);
+                }
+              }
+              // Columns P and Q: convert decimal to percentage
+              else if (col === "P" || col === "Q") {
+                var numPQ = parseFloat(val);
+                if (!isNaN(numPQ)) {
+                  displayValue = Math.round(numPQ * 100) + '%';
+                }
+              }
+              // Columns R and AJ: 2 decimal places
+              else if (col === "R" || col === "AJ") {
+                var numRAJ = parseFloat(val);
+                if (!isNaN(numRAJ)) {
+                  displayValue = numRAJ.toFixed(2);
+                }
+              }
+              // Columns AK and AL: convert decimal to percentage
+              else if (col === "AK" || col === "AL" || col === "AO") {
+                var numAKAL = parseFloat(val);
+                if (!isNaN(numAKAL)) {
+                  displayValue = Math.round(numAKAL * 100) + '%';
+                }
+              }
+              
+              cellContent = esc(displayValue);
+            }
+            
+          } 
+          // ── END OF MONITOR EDITABLE BLOCK ──
+
           // ── 1. MILESTONE PROGRESS BAR (BB–BW) — DISPLAY ONLY ──
           // ── 1. MILESTONE PROGRESS (BB–BW) — DISPLAY ONLY ──
-          if (isMilestone && MILESTONE_COLS.indexOf(col) !== -1) {
+          else if (isMilestone && MILESTONE_COLS.indexOf(col) !== -1) {
             var raw = parseFloat(val);
             // Auto-detect scale: if stored as 0–1 (e.g. 0.75), multiply to get %
             // If stored as 0–100 (e.g. 75), use directly.
@@ -495,7 +725,7 @@
               + 'onclick="event.stopPropagation()" '
               + 'placeholder="—" />';
 
-          // ── READ-ONLY ─────────────────────────────────────────
+                    // ── READ-ONLY with formatting ─────────────────────────
           } else {
             cellContent = esc(val);
           }
@@ -526,6 +756,9 @@
       if (cv(cells, ID_COL, r).trim() !== "") allRows.push(r);
     }
 
+    // Remove existing monitor save bar if any
+    var existingBar = document.getElementById("monitor-save-bar");
+    if (existingBar) existingBar.remove();
     container.innerHTML = "";
     container.className = "monitor-shell";
 
@@ -537,16 +770,98 @@
       }
     });
 
+    // ── Pending changes store ─────────────────────────────────
+    var pendingChanges = {};
+
+    function updateMonitorSaveBar() {
+      var count   = Object.keys(pendingChanges).length;
+      var bar     = document.getElementById("monitor-save-bar");
+      var countEl = document.getElementById("monitor-change-count");
+      if (bar)     bar.classList.toggle("visible", count > 0);
+      if (countEl) countEl.textContent = count;
+    }
+
     // ── Global cell-save event handler ────────────────────────
     // Inline onchange attributes call this.
-    // Updates the in-memory cells so re-renders reflect the change,
-    // then calls the host app's persistence function.
+    // Stages the change into pendingChanges and shows the save bar.
+    // Does NOT fire any API call — that happens on Save.
     window.__monitorSaveCellEvt = function (col, row, value) {
       var key = col + row;
       if (!cells[key]) cells[key] = {};
+      // Store original value on first edit so Discard can restore it
+      if (cells[key]._orig === undefined) cells[key]._orig = cells[key].v;
       cells[key].v = value;
-      saveCell(col, row, value);
+
+      // Stage the change
+      pendingChanges[key] = { col: col, row: row, value: value };
+      updateMonitorSaveBar();
+
       // Re-render the active panel to update bars / dependent cells
+      var activePanel  = panelEls[activeTab];
+      var activeTabDef = TABS[activeTab];
+      if (activePanel && activeTabDef) {
+        activePanel.innerHTML = renderTabHTML(
+          cells, rows, allRows, activeTabDef,
+          headerMap, collapseStates[activeTabDef.id] || [], user
+        );
+      }
+    };
+
+    // ── Save all pending monitor changes ──────────────────────
+    window.saveMonitorChanges = function () {
+      var btn     = document.getElementById("monitor-save-btn");
+      var entries = Object.values(pendingChanges);
+      if (!entries.length) return;
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px"></span>';
+
+      // Fire sequentially so the server never races on the same file
+      var chain = Promise.resolve();
+      entries.forEach(function (e) {
+        chain = chain.then(function () {
+          return fetch('/api/monitor/cell', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ col: e.col, row: e.row, value: e.value }),
+            credentials: 'include'
+          }).then(function (r) { return r.json(); });
+        });
+      });
+
+      chain.then(function () {
+        pendingChanges = {};
+        updateMonitorSaveBar();
+        // Show a brief success toast if the host app provides one
+        if (typeof window.toast === 'function') window.toast('Monitor saved \u2713');
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+      }).catch(function (err) {
+        if (typeof window.toast === 'function') window.toast('Save failed', 'error');
+        console.error('[Monitor] Save failed:', err);
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+      });
+    };
+
+    // ── Discard all pending monitor changes ───────────────────
+    window.discardMonitorChanges = function () {
+      // Revert the in-memory cells back to original values
+      Object.keys(pendingChanges).forEach(function (key) {
+        var e = pendingChanges[key];
+        var origKey = e.col + e.row;
+        // The original value was overwritten in cells — re-fetch from server
+        // by simply clearing the v so it renders blank until next full load.
+        // Better: store originals on first edit.
+        if (cells[origKey] && cells[origKey]._orig !== undefined) {
+          cells[origKey].v = cells[origKey]._orig;
+          delete cells[origKey]._orig;
+        }
+      });
+      pendingChanges = {};
+      updateMonitorSaveBar();
+
+      // Re-render active panel with reverted values
       var activePanel  = panelEls[activeTab];
       var activeTabDef = TABS[activeTab];
       if (activePanel && activeTabDef) {
@@ -573,8 +888,27 @@
     topRow.appendChild(tabBar);
     topRow.appendChild(badge);
 
-    container.appendChild(topRow);
-    container.appendChild(panelsWrap);
+    // ── Save bar (same structure as project save-bar) ─────────
+    // ── Save bar (full width, fixed at bottom) ─────────
+      var saveBar = document.createElement("div");
+      saveBar.id = "monitor-save-bar";
+      saveBar.className = "save-bar";
+      // Inline styles to override sidebar offset and make it full width
+      saveBar.style.cssText = "position:fixed !important;bottom:0 !important;left:0 !important;right:0 !important;width:100% !important;z-index:1000 !important;margin:0 !important;border-radius:0 !important;";
+      saveBar.innerHTML =
+          '<div class="save-bar-left">'
+        +   '<div class="save-count" id="monitor-change-count">0</div>'
+        +   '<div class="save-msg">unsaved changes</div>'
+        + '</div>'
+        + '<div class="save-actions">'
+        +   '<button class="btn btn-secondary btn-sm" onclick="discardMonitorChanges()">Discard</button>'
+        +   '<button class="btn btn-primary btn-sm" id="monitor-save-btn" onclick="saveMonitorChanges()">Save Changes</button>'
+        + '</div>';
+
+      container.appendChild(topRow);
+      container.appendChild(panelsWrap);
+      // Append to body instead of container so it stays fixed at bottom
+      document.body.appendChild(saveBar);
 
     // ── Create panels & toggle handlers ──────────────────────
     var panelEls = [];
@@ -600,11 +934,27 @@
           window["__monitorToggleGroup_" + t.id] = function (gi) {
             collapseStates[t.id][gi] = !collapseStates[t.id][gi];
             p.innerHTML = renderTabHTML(cells, rows, allRows, t, headerMap, collapseStates[t.id], user);
+
+            // Re-attach resize handles after re-render
+            var table = p.querySelector('.monitor-table');
+            if (table) {
+                setTimeout(function() {
+                    makeColumnsResizable(table, t.id);
+                }, 50);
+            }
           };
         })(tab, panel);
       }
 
       panel.innerHTML = renderTabHTML(cells, rows, allRows, tab, headerMap, collapseStates[tab.id] || [], user);
+
+      // Attach resize handles after rendering
+      var table = panel.querySelector('.monitor-table');
+        if (table) {
+          setTimeout(function() {
+              makeColumnsResizable(table, tab.id);
+        }, 50);
+      }
     });
 
     // ── Tab switching ─────────────────────────────────────────
@@ -620,5 +970,105 @@
   }
 
   global.renderMonitor = renderMonitor;
+
+// Add this function to refresh monitor data
+function refreshMonitorData(container, currentUser) {
+    fetch('/api/monitor/sheet?t=' + Date.now(), { credentials: 'include' })
+        .then(response => response.json())
+        .then(data => {
+            if (container && typeof renderMonitor === 'function') {
+                renderMonitor(container, data, currentUser);
+            }
+        })
+        .catch(err => console.error('Failed to refresh monitor:', err));
+}
+
+// Expose it globally so app.js can call it
+global.refreshMonitorData = refreshMonitorData;
+
+// ── Make columns resizable (temporary, no persistence) ──
+function makeColumnsResizable(tableElement, tabId) {
+    if (!tableElement) return;
+    
+    var ths = tableElement.querySelectorAll('.monitor-th');
+    ths.forEach(function(th, index) {
+        // Skip the # column (first th)
+        if (index === 0 && th.classList.contains('monitor-th-num')) return;
+        
+        // Remove existing handle if any
+        var existingHandle = th.querySelector('.resize-handle');
+        if (existingHandle) existingHandle.remove();
+        
+        // Add resize handle on the LEFT edge
+        var handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        handle.style.cssText = [
+            'position:absolute',
+            'left:0',                    // Changed from right:0 to left:0
+            'top:0',
+            'width:5px',
+            'height:100%',
+            'cursor:col-resize',
+            'user-select:none',
+            'z-index:10',
+            'background:transparent'
+        ].join(';');
+        
+        th.style.position = 'relative';
+        th.appendChild(handle);
+        
+        var startX, startWidth;
+        
+        handle.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            startX = e.pageX;
+            
+            // Get the column to the LEFT of this one
+            var leftTh = ths[index - 1];
+            if (!leftTh) return; // No column to the left
+            
+            startWidth = leftTh.offsetWidth;
+            
+            function onMouseMove(e) {
+                // Calculate new width for the LEFT column
+                var delta = e.pageX - startX;
+                var newWidth = startWidth + delta;
+                
+                if (newWidth > 30) { // Minimum width
+                    // Resize the LEFT column
+                    leftTh.style.width = newWidth + 'px';
+                    leftTh.style.minWidth = newWidth + 'px';
+                    
+                    // Update corresponding col in colgroup (index - 1)
+                    var colElements = tableElement.querySelectorAll('colgroup col');
+                    if (colElements[index-1]) { // Index matches the left column's col
+                        colElements[index-1].style.width = newWidth + 'px';
+                    }
+                    
+                    // Update all cells in the LEFT column
+                    var rows = tableElement.querySelectorAll('tbody tr');
+                    rows.forEach(function(row) {
+                        if (row.cells[index - 1]) {
+                            row.cells[index - 1].style.width = newWidth + 'px';
+                            row.cells[index - 1].style.minWidth = newWidth + 'px';
+                        }
+                    });
+                }
+            }
+            
+            function onMouseUp() {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                document.body.style.cursor = '';
+            }
+            
+            document.body.style.cursor = 'col-resize';
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    });
+}
+
 
 })(window);

@@ -358,6 +358,23 @@ async function renderDashboard() {
   switchToDashboard();
 }
 
+async function refreshMonitorData() {
+    var page = document.getElementById("page-content");
+    var monitorGrid = document.getElementById("monitor-grid");
+    if (!monitorGrid) return; // Only refresh if monitor is active
+    
+    try {
+        var data = await API.req("GET", "/monitor/sheet?t=" + Date.now());
+        if (data && !data.error) {
+            // Clear and re-render
+            monitorGrid.innerHTML = "";
+            renderMonitor(monitorGrid, data, state.user);
+        }
+    } catch(err) {
+        console.error("Failed to refresh monitor:", err);
+    }
+}
+
 async function switchToMonitor() {
     setNavBtn("monitor");
     setTopbar(null, false);
@@ -2088,6 +2105,8 @@ async function saveChanges() {
       }
       // Fire-and-forget: write timestamp to monitor BA column
       API.updateMonitorTimestamp(state.project.id, serverTs).catch(function() {});
+      // ADD THIS LINE: Refresh monitor data after save
+            refreshMonitorData();
     }
 
     // Invalidate client cache so re-render fetches fresh data from server

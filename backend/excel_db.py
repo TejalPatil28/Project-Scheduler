@@ -627,6 +627,46 @@ def _cell_val(cells, col, row):
         return None
     return info.get("v")
 
+def get_task_data_from_cache(project_id, role="sw_tl"):
+    """
+    Get task data (task name and completion %) from project JSON cache.
+    Returns dict: {task_name: percent, ...}
+    Stops when task name is empty.
+    """
+    _, _, sched_cache, _ = get_discipline_dirs(role)
+    
+    # Read sheet cache
+    sheet = _read_sheet_cache(project_id, sched_cache)
+    if not sheet:
+        print(f"[Monitor] No sheet cache found for {project_id}")
+        return {}
+    
+    cells = sheet.get("cells", {})
+    tasks = {}
+    
+    for row in range(9, 56):  # rows 9-55
+        # Get task name from column I
+        task_name = _cell_val(cells, "I", row)
+        
+        # Stop if task name is empty (no more tasks)
+        if not task_name or not str(task_name).strip():
+            break
+        
+        # Get completion % from column Z
+        percent_raw = _cell_val(cells, "Z", row)
+        percent = 0
+        if percent_raw is not None:
+            s = str(percent_raw).replace("%", "").strip()
+            try:
+                p = float(s)
+                percent = int(p * 100) if p <= 1.0 else int(p)
+            except (ValueError, TypeError):
+                percent = 0
+        
+        tasks[str(task_name).strip()] = percent
+    
+    return tasks
+
 def _pct_from_sheet(cells, col, row):
     """Extract percent as int 0-100 from sheet JSON cell."""
     v = _cell_val(cells, col, row)
@@ -738,6 +778,7 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     - Updates JSON cache immediately (fast)
     - Queues Excel write for background (slow)
     - Updates monitor timestamp
+    - Updates monitor task percentages
     - Regenerates system memory JSON in background
     """
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
@@ -745,13 +786,29 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     # Step 1: Update JSON cache immediately (fast) — returns stamped timestamp
     now_str = _update_sheet_cache(project_id, updates, sched_cache)
 
-    # Step 2: Update monitor timestamp with the same timestamp (JSON cache + queue Excel write)
+    # Step 2: Prepare monitor updates
+    monitor_updates = {}
+    
+    # 2a: Update timestamp
     if now_str:
-        update_monitor_timestamp(project_id, now_str, role)
+        timestamp_updates = update_monitor_timestamp(project_id, now_str, role)
+        monitor_updates.update(timestamp_updates)
+    
+    # 2b: Update task percentages (always, not just when tasks changed)
+    task_updates = update_monitor_task_percentages(project_id, role)
+    monitor_updates.update(task_updates)
+    
+    # 2c: Queue monitor Excel write if there are updates
+    if monitor_updates:
+        # Map role to department for queue
+        role_to_dept = {
+            "sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG",
+            "pm": "PM", "admin": "SW", "head": "SW"
+        }
+        department = role_to_dept.get(role, "SW")
+        queue_monitor_excel_write(department, monitor_updates)
 
     # Step 3: Queue Excel write to background thread
-    # Sysmemory is read inside _do_excel_write after save completes,
-    # so it always runs after the Excel write is fully done.
     queue_excel_write(project_id, updates, role)
 
     updated_count = len(updates)
@@ -1055,6 +1112,7 @@ def _resolve_color(color_obj):
     except Exception:
         pass
     return None
+
 
 def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     """Read cell values + basic formatting. Uses JSON sidecar cache for speed."""
@@ -1592,17 +1650,26 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
         print(f"Error loading monitor file {filepath}: {e}")
         return None
     ws = wb.active
-    max_row = ws.max_row
     max_col = ws.max_column
-    
+
+    # Find the true last data row by scanning only column F (col index 6).
+    # ws.max_row is unreliable — Excel stores formatting extents that can
+    # stretch thousands of rows past real data, bloating the JSON massively.
+    # Scan column F from row 12 (first real data row) to find last project.
+    # Row 10 = headers, row 11 = ignored placeholder (_), row 12+ = data.
+    # Stop as soon as we hit "_" or empty — that marks end of data.
+    max_row = ws.max_row
+
     # Get all columns (A, B, C, ... up to max_col)
     cols = [gcl(i) for i in range(1, max_col + 1)]
-    
-    # Read cells
+
+    # Read cells — skip None values to keep JSON small
     cells = {}
     for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
         for cell in row:
             v = cell.value
+            if v is None:
+                continue  # skip empty cells — biggest source of bloat
             # Handle datetime
             if isinstance(v, datetime):
                 v = v.strftime("%d-%b-%y")
@@ -1614,7 +1681,7 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
                 v = v.strftime("%H:%M")
             # Keep other values as they are
             cells[cell.coordinate] = {"v": v}
-    
+
     result = {
         "cells": cells,
         "col_widths": {col: 64 for col in cols},
@@ -2070,7 +2137,53 @@ def _read_sysmemory_from_excel(project_id, fpath, role):
 
     print(f"[Sysmemory] Written: {sysmemory_path}")
 
-
+def update_monitor_cell(department, coord, value, role="sw_tl"):
+    """Update a single cell in monitor JSON cache and queue Excel write"""
+    import json
+    import os
+    from datetime import datetime
+    
+    monitor_cache_dir = os.path.join(DATA_DIR, department, "cache", "monitoring")
+    monitor_cache_path = os.path.join(monitor_cache_dir, f"{department}_Monitor.json")
+    
+    if not os.path.exists(monitor_cache_path):
+        print(f"[Monitor] Cache not found: {monitor_cache_path}")
+        return False
+    
+    try:
+        # Load monitor cache
+        with open(monitor_cache_path, 'r') as f:
+            monitor_data = json.load(f)
+        
+        cells = monitor_data.get('cells', {})
+        
+        # Update the cell
+        if coord not in cells:
+            cells[coord] = {}
+        
+        cells[coord]['v'] = value
+        cells[coord]['updated'] = True
+        
+        # NO timestamp update for monitor edits
+        
+        # Write back to JSON cache
+        with open(monitor_cache_path, 'w') as f:
+            json.dump(monitor_data, f, indent=2)
+        
+        # Queue Excel write
+        from excel_db import queue_monitor_excel_write
+        updates = {coord: value}
+        queue_monitor_excel_write(department, updates)
+        
+        print(f"[Monitor] Updated {coord} = {value}")
+        return True
+        
+    except Exception as e:
+        print(f"[Monitor] Failed to update cell: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+        
 def queue_excel_write(project_id, updates, role):
     """Queue a project for background Excel write"""
     _start_background_worker()  # Ensure worker is running
@@ -2090,58 +2203,31 @@ def _do_monitor_excel_write(department, updates):
         print(f"[Monitor Background] File not found: {monitor_path}")
         return
     
-    # Check if file is empty or corrupted
     try:
-        if os.path.getsize(monitor_path) == 0:
-            print(f"[Monitor Background] File is empty: {monitor_path}")
-            return
-    except OSError as e:
-        print(f"[Monitor Background] Cannot check file size: {e}")
-        return
-    
-    try:
-        # Load workbook with error handling
+        # Load workbook
         try:
             wb = load_workbook(monitor_path, data_only=True)
         except EOFError:
             print(f"[Monitor Background] EOFError - file may be corrupted: {monitor_path}")
-            # Try to recover by loading in read-only mode first
-            try:
-                wb = load_workbook(monitor_path, read_only=True, data_only=True)
-                wb.close()  # Just to check if readable
-                # If readable, try normal load again
-                wb = load_workbook(monitor_path, data_only=True)
-            except Exception as e2:
-                print(f"[Monitor Background] Cannot recover corrupted file: {e2}")
-                return
+            return
         
         ws = wb["SWMon"] if "SWMon" in wb.sheetnames else wb.active
 
+        # Process all updates
         for coord, value in updates.items():
             if value is None:
                 continue
             cell = ws[coord]
-
-            # FIX: Handle integer values in date-formatted cells BEFORE assignment
-            # This prevents the 'int has no attribute year' error
+            
+            # Handle date format cells (BA column)
             cell_is_date_fmt = False
             try:
                 if cell.number_format:
                     cell_is_date_fmt = _is_date_fmt(cell.number_format)
             except Exception:
                 pass
-
-            # If cell has date format and value is integer, convert to datetime
-            if cell_is_date_fmt and isinstance(value, int):
-                try:
-                    # Convert Excel serial date integer to datetime
-                    if 1 <= value <= 2958465:  # Valid Excel date range
-                        value = _from_excel(value)
-                except Exception as e:
-                    print(f"[Monitor Background] Could not convert int {value} to date: {e}")
-                    # Keep as is and let openpyxl handle (might still error)
             
-            # Handle string timestamps
+            # Convert timestamp string to datetime if needed
             if cell_is_date_fmt and isinstance(value, str):
                 for fmt in ("%d-%m-%Y %H:%M:%S", "%d %b %Y, %I:%M %p",
                             "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
@@ -2150,10 +2236,12 @@ def _do_monitor_excel_write(department, updates):
                         break
                     except ValueError:
                         continue
-
+            
+            # For percentage cells, they are stored as strings with %
+            # No conversion needed for non-date cells
+            
             cell.value = value
 
-        # Save workbook
         wb.save(monitor_path)
         print(f"[Monitor Background] Excel saved: {monitor_path}")
 
@@ -2200,7 +2288,8 @@ def queue_monitor_excel_write(department, updates):
 
 
 def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
-    """Update the BA column timestamp for a project in monitor JSON cache and queue Excel write"""
+    """Update the BA column timestamp for a project in monitor JSON cache.
+    Returns dict of updates applied."""
     from datetime import datetime
     import json
     import os
@@ -2221,7 +2310,7 @@ def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
     
     if not os.path.exists(monitor_cache_path):
         print(f"[Monitor] Cache not found: {monitor_cache_path}")
-        return False
+        return {}
     
     try:
         # Load monitor cache
@@ -2230,7 +2319,7 @@ def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
         
         cells = monitor_data.get('cells', {})
         
-        # Find the row with matching project ID in COLUMN B
+        # Find the row with matching project ID in COLUMN F
         found_row = None
         for coord, cell_info in cells.items():
             if coord.startswith('B') and cell_info.get('v') == project_id:
@@ -2252,14 +2341,115 @@ def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
             
             print(f"[Monitor] Updated cache for {project_id} at row {found_row}: {timestamp}")
             
-            # Queue Excel write to background
-            queue_monitor_excel_write(department, {ba_coord: timestamp})
-            
-            return True
+            # Return updates dict
+            return {ba_coord: timestamp}
         else:
             print(f"[Monitor] Project {project_id} not found in monitor cache (searched column F)")
-            return False
+            return {}
             
     except Exception as e:
         print(f"[Monitor] Failed to update timestamp: {e}")
-        return False
+        return {}
+
+def update_monitor_task_percentages(project_id, role="sw_tl"):
+    """
+    Update task completion percentages in monitor JSON cache.
+    Reads all tasks from project cache and writes them to monitor columns.
+    Returns dict of updates applied.
+    """
+    from datetime import datetime
+    import json
+    import os
+    from openpyxl.utils import get_column_letter as gcl
+    
+    # Map role to department
+    role_to_dept = {
+        "sw_tl": "SW",
+        "hw_tl": "HW", 
+        "mfg_tl": "MFG",
+        "pm": "PM",
+        "admin": "SW",
+        "head": "SW"
+    }
+    
+    department = role_to_dept.get(role, "SW")
+    monitor_cache_dir = os.path.join(DATA_DIR, department, "cache", "monitoring")
+    monitor_cache_path = os.path.join(monitor_cache_dir, f"{department}_Monitor.json")
+    
+    if not os.path.exists(monitor_cache_path):
+        print(f"[Monitor] Cache not found: {monitor_cache_path}")
+        return {}
+    
+    try:
+        # Load monitor cache
+        with open(monitor_cache_path, 'r') as f:
+            monitor_data = json.load(f)
+        
+        cells = monitor_data.get('cells', {})
+        
+        # Find the row with matching project ID in COLUMN F
+        found_row = None
+        for coord, cell_info in cells.items():
+            if coord.startswith('B') and cell_info.get('v') == project_id:
+                found_row = int(coord[1:])
+                break
+        
+        if not found_row:
+            print(f"[Monitor] Project {project_id} not found in monitor cache")
+            return {}
+        
+        # Get column headers from row 10 (BB to CV)
+        # BB = column 54, let's go up to column 100 (CV)
+        col_headers = {}
+        start_col_idx = 54  # BB
+        end_col_idx = 100   # CV
+        
+        for col_idx in range(start_col_idx, end_col_idx + 1):
+            col_letter = gcl(col_idx)
+            coord = f"{col_letter}10"  # row 10 is header row
+            header_val = cells.get(coord, {}).get('v')
+            if header_val and str(header_val).strip():
+                col_headers[str(header_val).strip()] = col_letter
+        
+        # Get task data from project cache
+        task_data = get_task_data_from_cache(project_id, role)
+        
+        if not task_data:
+            print(f"[Monitor] No task data found for {project_id}")
+            return {}
+        
+        updates = {}
+        
+        # Match and update
+        for task_name, percent in task_data.items():
+            if task_name in col_headers:
+                col_letter = col_headers[task_name]
+                coord = f"{col_letter}{found_row}"
+                
+                # Format percent as string with % (e.g., "75%")
+                percent_str = f"{percent}%"
+                
+                # Update JSON cache immediately
+                if coord not in cells:
+                    cells[coord] = {}
+                cells[coord]['v'] = percent_str
+                cells[coord]['updated'] = True
+                
+                # Add to updates dict for Excel write
+                updates[coord] = percent_str
+                
+                print(f"[Monitor] Updated {task_name} at {coord}: {percent_str}")
+            else:
+                print(f"[Monitor] No matching column for task: {task_name}")
+        
+        # Write back to JSON cache
+        with open(monitor_cache_path, 'w') as f:
+            json.dump(monitor_data, f, indent=2)
+        
+        return updates
+        
+    except Exception as e:
+        print(f"[Monitor] Failed to update task percentages: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}

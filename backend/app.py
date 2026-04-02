@@ -17,6 +17,7 @@ from excel_db import (
     get_master_projects,
     get_discipline_dirs,
     OWNER_MAP,
+    update_monitor_cell,
     update_monitor_timestamp,
 )
 
@@ -264,7 +265,7 @@ def get_monitor_sheet():
     
     # Construct path to department monitoring file
     monitor_filename = f"{department}_Monitor.xlsx"
-    dept_dir = os.path.dirname(PROJECTS_DIR)  # This gives data/SW/
+    dept_dir = os.path.dirname(PROJECTS_DIR)
     fpath = os.path.join(dept_dir, monitor_filename)
     
     print(f"[Monitor] Looking for: {fpath}")
@@ -273,14 +274,9 @@ def get_monitor_sheet():
         print(f"[Monitor] File not found: {fpath}")
         return jsonify({"error": f"No monitoring file found for {department}"}), 404
     
-    # Check in-memory cache
-    cache_key = "monitor_" + department
-    if cache_key in _sheet_cache:
-        return jsonify(_sheet_cache[cache_key])
-    
+    # ALWAYS read fresh from JSON cache - don't use in-memory cache
     try:
         data = get_monitor_sheet_data(fpath, department)
-        _sheet_cache[cache_key] = data
         return jsonify(data)
     except Exception as e:
         print(f"[Monitor] Error: {e}")
@@ -456,6 +452,48 @@ def remove_user(username):
         return jsonify({"error": msg}), 404
     return jsonify({"message": msg})
 
+@app.route("/api/monitor/cell", methods=["POST"])
+@login_required
+def update_monitor_cell():
+    """Save a single cell edit in the monitor file"""
+    user = get_current_user()
+    role = user["role"]
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    col = data.get("col")
+    row = data.get("row")
+    value = data.get("value")
+    
+    if not col or not row:
+        return jsonify({"error": "Column and row required"}), 400
+    
+    # Map role to department
+    role_to_dept = {
+        "sw_tl": "SW",
+        "hw_tl": "HW",
+        "mfg_tl": "MFG",
+        "pm": "PM",
+        "admin": "SW",
+        "head": "SW"
+    }
+    department = role_to_dept.get(role, "SW")
+    
+    # Update monitor cache and queue Excel write
+    coord = f"{col}{row}"
+    
+    try:
+        from excel_db import update_monitor_cell
+        result = update_monitor_cell(department, coord, value, role)
+        if result:
+            return jsonify({"message": "Saved", "coord": coord, "value": value})
+        else:
+            return jsonify({"error": "Failed to save"}), 500
+    except Exception as e:
+        print(f"Error saving monitor cell: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     print("Starting Project Scheduler on http://localhost:5000")
