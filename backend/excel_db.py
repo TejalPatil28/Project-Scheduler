@@ -1608,7 +1608,7 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
                     base_dir = os.path.dirname(PROJECTS_DIR)
                     sysmemory_cache = os.path.join(base_dir, "cache", "system_memory")
                 
-                compute_sysmemory_json(project_id, sheet_data, sysmemory_cache)
+                generate_sysmemory_json(fpath, project_id, sched_cache)
                 print(f"[Auto] System memory JSON created for {project_id}")
         except Exception as e:
             print(f"[Auto] Failed to create system memory JSON for {project_id}: {e}")
@@ -1707,20 +1707,18 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
     
 def generate_sysmemory_json(filepath, project_id, sched_cache=None):
     """
-    Generate system memory JSON from columns CY to DJ (rows 1-55).
-    Uses PyCel to evaluate formulas.
-    Stores in data/[discipline]/cache/system_memory/[project_id]_sysmemory.json
+    Generate system memory JSON.
+    - Rows 1-7: DE and DF columns only (skip DE2)
+    - Row 8: CY to DJ headers + I header
+    - Rows 9+: Read task name from I using openpyxl (no PyCel)
+    - Stops after first empty task name
     """
     import os
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
     
-    # Determine discipline from the filepath
-    # Path format: .../data/SW/SWESch/file.xlsx
-    # We want: .../data/SW/cache/system_memory/
+    # Determine discipline
     parts = filepath.split(os.sep)
-    
-    # Find where 'data' is in the path
     data_index = None
     for i, part in enumerate(parts):
         if part == 'data':
@@ -1732,33 +1730,32 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
         base_path = os.sep.join(parts[:data_index + 1])
         sysmemory_cache = os.path.join(base_path, discipline, "cache", "system_memory")
     else:
-        # Fallback to using DATA_DIR
         sysmemory_cache = os.path.join(DATA_DIR, "SW", "cache", "system_memory")
     
     os.makedirs(sysmemory_cache, exist_ok=True)
-    
     sysmemory_path = os.path.join(sysmemory_cache, f"{project_id}_sysmemory.json")
     
-    # Load workbook with formulas
+    # Load workbook with data_only=False to keep formulas for CY-DJ
     wb = load_workbook(filepath, data_only=False)
     ws = wb.active
     sheet_name = ws.title
     
-    # Get column letters from CY to DJ
-    # CY = 103rd column, DJ = 114th column
+    # Columns from CY to DJ
     start_col_idx = 103  # CY
     end_col_idx = 114    # DJ
-    
     sysmemory_cols = [gcl(i) for i in range(start_col_idx, end_col_idx + 1)]
     
-    # Initialize PyCel
+    # Header columns for rows 1-7 (DE and DF)
+    header_cols_1_7 = ["DE", "DF"]
+    
+    # Initialize PyCel for CY-DJ formula evaluation only
     excel_compiler = None
     if PY_CEL_AVAILABLE:
         try:
             excel_compiler = ExcelCompiler(filepath)
             print(f"PyCel initialized for system memory generation: {project_id}")
         except Exception as e:
-            print(f"PyCel initialization failed for system memory {project_id}: {e}")
+            print(f"PyCel initialization failed: {e}")
     
     # Prepare system memory data
     sysmemory_data = {
@@ -1768,34 +1765,30 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
-    # Loop through rows 1 to 55
-    for row in range(1, 56):
+    # Step 1: Read rows 1-7 (only DE and DF columns)
+    for row in range(1, 8):
         row_data = {}
-        for col in sysmemory_cols:
+        for col in header_cols_1_7:
+            if col == "DE" and row == 2:
+                continue
+            
             coord = f"{col}{row}"
             cell = ws[coord]
             value = None
             
-            # If cell has formula and PyCel available, evaluate it
             if excel_compiler and cell.data_type == 'f':
                 try:
                     cell_ref = f"{sheet_name}!{coord}"
                     value = excel_compiler.evaluate(cell_ref)
-                except Exception as e:
-                    print(f"System memory eval failed for {coord}: {e}")
-                    # Fallback to openpyxl value
+                except Exception:
                     value = cell.value
             else:
                 value = cell.value
             
-            # Convert to appropriate type for JSON
             if isinstance(value, (datetime, date)):
                 if isinstance(value, datetime):
                     value = value.date()
                 value = value.strftime("%Y-%m-%d")
-            elif isinstance(value, float):
-                # Keep as float
-                pass
             elif value is None:
                 value = None
             
@@ -1803,16 +1796,80 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
         
         sysmemory_data["rows"][str(row)] = row_data
     
+    # Step 2: Read row 8 headers
+    row8_data = {}
+    for col in sysmemory_cols:
+        coord = f"{col}8"
+        cell = ws[coord]
+        row8_data[col] = cell.value if cell.value else col
+    
+    # Read column I header directly from openpyxl
+    i_cell_8 = ws["I8"]
+    row8_data["I"] = i_cell_8.value if i_cell_8.value else "I"
+    
+    sysmemory_data["rows"]["8"] = row8_data
+    
+    # Step 3: Read rows 9 onwards
+    for row in range(9, 56):
+        row_data = {}
+        
+        # Read task name from column I - DIRECTLY from openpyxl, NO PyCel
+        i_cell = ws[f"I{row}"]
+        task_name = i_cell.value
+        
+        # Convert to string and clean
+        if task_name is not None:
+            task_name = str(task_name).strip()
+        else:
+            task_name = ""
+        
+        print(f"Row {row}: Column I raw value = '{task_name}'")
+        
+        # Store task name if not empty
+        if task_name:
+            row_data["I"] = task_name
+        
+        # Read CY to DJ columns (use PyCel for formulas)
+        for col in sysmemory_cols:
+            coord = f"{col}{row}"
+            cell = ws[coord]
+            value = None
+            
+            if excel_compiler and cell.data_type == 'f':
+                try:
+                    cell_ref = f"{sheet_name}!{coord}"
+                    value = excel_compiler.evaluate(cell_ref)
+                except Exception:
+                    value = cell.value
+            else:
+                value = cell.value
+            
+            if isinstance(value, (datetime, date)):
+                if isinstance(value, datetime):
+                    value = value.date()
+                value = value.strftime("%Y-%m-%d")
+            elif value is None:
+                value = None
+            
+            row_data[col] = value
+        
+        sysmemory_data["rows"][str(row)] = row_data
+        
+        # Stop if no task name
+        if not task_name:
+            print(f"Stopping at row {row} - no task name")
+            break
+    
     wb.close()
     
-    # Write to JSON file
+    # Write to JSON
     try:
         with open(sysmemory_path, 'w') as f:
             json.dump(sysmemory_data, f, indent=2)
         print(f"System memory JSON saved: {sysmemory_path}")
         return sysmemory_path
     except Exception as e:
-        print(f"Failed to save system memory JSON for {project_id}: {e}")
+        print(f"Failed to save system memory JSON: {e}")
         return None
 
 def delete_user(username):
@@ -1997,7 +2054,9 @@ def _do_excel_write(project_id, updates, role):
     # Excel write is fully complete. Multiple saves are serialised by the
     # queue, so a second save waits its turn before its sysmemory is read.
     try:
-        _read_sysmemory_from_excel(project_id, fpath, role)
+                # Get the sched_cache directory first
+        _, _, sched_cache, _ = get_discipline_dirs(role)
+        generate_sysmemory_json(fpath, project_id, sched_cache)
     except Exception as e:
         print(f"[Background] Sysmemory read failed for {project_id}: {e}")
 
@@ -2183,7 +2242,120 @@ def update_monitor_cell(department, coord, value, role="sw_tl"):
         import traceback
         traceback.print_exc()
         return False
+
+def read_sysmemory_json(project_id, role="sw_tl"):
+    """
+    Read sysmemory JSON for a project and extract task overdue status.
+    Returns dict: { task_name: { "PLRedActivity": 0/1, "PMRedActivity": 0/1 } }
+    """
+    import json
+    import os
+    
+    # Map role to discipline
+    role_to_dept = {
+        "sw_tl": "SW",
+        "hw_tl": "HW",
+        "mfg_tl": "MFG",
+        "pm": "PM",
+        "admin": "SW",
+        "head": "SW"
+    }
+    department = role_to_dept.get(role, "SW")
+    
+    # Path to sysmemory JSON
+    sysmemory_path = os.path.join(DATA_DIR, department, "cache", "system_memory", f"{project_id}_sysmemory.json")
+    
+    if not os.path.exists(sysmemory_path):
+        print(f"[Sysmemory] File not found: {sysmemory_path}")
+        return {}
+    
+    try:
+        with open(sysmemory_path, 'r') as f:
+            data = json.load(f)
         
+        # The sysmemory JSON structure has "rows" with task data
+        # Task rows are from 9 to 55
+        rows = data.get("rows", {})
+        task_columns = data.get("task_cols", [])
+        
+        # Find which columns are PLRedActivity and PMRedActivity
+        # Based on your sysmemory structure, these are likely in task_cols
+        # You need to identify the exact column letters
+        # For now, assuming they are named "PLRedActivity" and "PMRedActivity"
+        
+        # Build task map
+        task_map = {}
+        
+        # Loop through task rows (9 to 55)
+        for row_num in range(9, 56):
+            row_key = str(row_num)
+            if row_key not in rows:
+                continue
+            
+            row_data = rows[row_key]
+            
+            # Get task name - usually in column "I" or similar
+            # You need to confirm which column holds task name in sysmemory
+            task_name = row_data.get("I", "")  # Adjust column letter as needed
+            
+            if not task_name or not str(task_name).strip():
+                continue
+            
+            task_name = str(task_name).strip()
+            
+            # Get overdue flags - adjust column letters as needed
+            pl_red = row_data.get("PLRedActivity", 0)
+            pm_red = row_data.get("PMRedActivity", 0)
+            
+            # Convert to int if needed
+            try:
+                pl_red = int(pl_red) if pl_red else 0
+                pm_red = int(pm_red) if pm_red else 0
+            except (ValueError, TypeError):
+                pl_red = 0
+                pm_red = 0
+            
+            task_map[task_name] = {
+                "PLRedActivity": pl_red,
+                "PMRedActivity": pm_red
+            }
+        
+        return task_map
+        
+    except Exception as e:
+        print(f"[Sysmemory] Error reading {project_id}: {e}")
+        return {}
+
+def load_user_overdue_status(user):
+    """
+    Load overdue status for all projects assigned to the user.
+    Returns dict: { project_id: { task_name: { PLRedActivity, PMRedActivity } } }
+    """
+    from datetime import datetime
+    
+    print(f"[Overdue] Loading overdue status for user: {user.get('username')}")
+    
+    # Get projects for this user
+    projects = get_projects_for_user(user)
+    
+    overdue_map = {}
+    role = user.get("role", "sw_tl")
+    
+    for project in projects:
+        project_id = project.get("file_id") or project.get("id")
+        if not project_id:
+            continue
+        
+        # Read sysmemory for this project
+        task_map = read_sysmemory_json(project_id, role)
+        
+        if task_map:
+            overdue_map[project_id] = task_map
+            print(f"[Overdue] Loaded {len(task_map)} tasks for {project_id}")
+    
+    print(f"[Overdue] Total projects loaded: {len(overdue_map)}")
+    return overdue_map
+
 def queue_excel_write(project_id, updates, role):
     """Queue a project for background Excel write"""
     _start_background_worker()  # Ensure worker is running

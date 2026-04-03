@@ -81,6 +81,11 @@ def login():
         return jsonify({"error": "Invalid credentials"}), 401
 
     session["username"] = user["username"]
+
+     # Load overdue status for this user and store in session
+    from excel_db import load_user_overdue_status
+    session["overdue_map"] = load_user_overdue_status(user)
+
     return jsonify({
         "name":     user["name"],
         "username": user["username"],
@@ -277,7 +282,15 @@ def get_monitor_sheet():
     # ALWAYS read fresh from JSON cache - don't use in-memory cache
     try:
         data = get_monitor_sheet_data(fpath, department)
-        return jsonify(data)
+        # Get overdue map from session
+        overdue_map = session.get("overdue_map", {})
+        
+        # Return both sheet data and overdue data
+        return jsonify({
+            "sheet": data,
+            "overdue": overdue_map
+        })
+        
     except Exception as e:
         print(f"[Monitor] Error: {e}")
         import traceback
