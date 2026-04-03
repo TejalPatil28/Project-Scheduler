@@ -361,14 +361,13 @@ async function renderDashboard() {
 async function refreshMonitorData() {
     var page = document.getElementById("page-content");
     var monitorGrid = document.getElementById("monitor-grid");
-    if (!monitorGrid) return; // Only refresh if monitor is active
+    if (!monitorGrid) return;
     
     try {
-        var data = await API.req("GET", "/monitor/sheet?t=" + Date.now());
-        if (data && !data.error) {
-            // Clear and re-render
+        var result = await API.req("GET", "/monitor/sheet?t=" + Date.now());
+        if (result && !result.error) {
             monitorGrid.innerHTML = "";
-            renderMonitor(monitorGrid, data, state.user);
+            renderMonitor(monitorGrid, result.sheet, state.user, result.overdue || {});
         }
     } catch(err) {
         console.error("Failed to refresh monitor:", err);
@@ -385,8 +384,8 @@ async function switchToMonitor() {
     var page = document.getElementById("page-content");
     page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading monitor...</div>';
     try {
-        var data = await API.req("GET", "/monitor/sheet");
-        if (!data || data.error) {
+        var result = await API.req("GET", "/monitor/sheet?t=" + Date.now());
+        if (!result || result.error) {
             page.innerHTML = '<div class="empty" style="padding-top:80px"><div class="empty-icon">&#9906;</div><div class="empty-text">No monitoring file found for your account.</div></div>';
             return;
         }
@@ -397,7 +396,8 @@ async function switchToMonitor() {
         wrap.style.overflow = "auto";
         page.innerHTML = "";
         page.appendChild(wrap);
-        renderMonitor(wrap, data, state.user);
+        // Pass sheet data and overdue data separately
+        renderMonitor(wrap, result.sheet, state.user, result.overdue || {});
     } catch(err) {
         page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
     }

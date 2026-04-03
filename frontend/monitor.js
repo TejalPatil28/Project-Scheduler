@@ -282,7 +282,7 @@ function calculateColumnSums(cells, rows, cols) {
   }
 
   // ── Render one tab's full table HTML ─────────────────────────
-  function renderTabHTML(cells, rows, allRows, tab, headerMap, collapseState, user) {
+  function renderTabHTML(cells, rows, allRows, tab, headerMap, collapseState, user, overdueMap) {
     var cols        = tab.cols;
     var scroll      = tab.scroll;
     var colGroups   = tab.colGroups || null;
@@ -339,7 +339,7 @@ function calculateColumnSums(cells, rows, cols) {
     ] : [
       { columns: ["M","G","K","L","F","O","P","Q","R","S","T","U","V","W","X","Y","Z","AA","AB","AC","AD","AE","AF","AG","AH","AI","AJ","AK","AL","AM","AN","AO","AQ","BA"], color: "#747070" },
       { columns: ["E","N","I","J","C","D","AR","AP"], color: "#90b4df" },
-      { columns: ["H","BB","BC","BD","BE","BF","BG","BH","BI","BJ","BK","BL","BM","BN","BO","BP","BQ","BR","BS","BT","BU","BV","BW"], color: "#000000" },
+      { columns: ["H","BB","BC","BD","BE","BF","BG","BH","BI","BJ","BK","BL","BM","BN","BO","BP","BQ","BR","BS","BT","BU","BV","BW"], color: "#191616" },
     ];
 
     var textColorRules = isDark ? [
@@ -662,15 +662,38 @@ function calculateColumnSums(cells, rows, cols) {
           // ── 1. MILESTONE PROGRESS (BB–BW) — DISPLAY ONLY ──
           else if (isMilestone && MILESTONE_COLS.indexOf(col) !== -1) {
             var raw = parseFloat(val);
-            // Auto-detect scale: if stored as 0–1 (e.g. 0.75), multiply to get %
-            // If stored as 0–100 (e.g. 75), use directly.
             var pct = isNaN(raw) ? 0 : (raw <= 1 && raw > 0 ? Math.round(raw * 100) : Math.round(raw));
-            if (pct < 0)   pct = 0;
+            if (pct < 0) pct = 0;
             if (pct > 100) pct = 100;
+            
+            // Check if this task is overdue for the user's role
+            var taskName = headerMap[col]; // Column header is the task name
+            var projectId = cv(cells, "F", r); // Get project ID from column F at this row
+            
+            var isOverdue = false;
+            var userRole = (user && user.role) || "";
+            
+            if (overdueMap && projectId && overdueMap[projectId]) {
+              var projectTasks = overdueMap[projectId];
+              if (projectTasks && projectTasks[taskName]) {
+                var taskStatus = projectTasks[taskName];
+                if (userRole === "sw_tl" && taskStatus.PLRedActivity === 1) {
+                  isOverdue = true;
+                } else if (userRole === "head" && taskStatus.PMRedActivity === 1) {
+                  isOverdue = true;
+                }
+              }
+            }
+            
+            // Apply red styling if overdue
+            if (isOverdue) {
+              style = "background-color:#ff4444 !important;color:#ffffff !important;font-weight:bold !important;";
+            }
+            
             cellContent = pct + '%';
-
+          }
           // ── 2. DROPDOWN: N and AP ───────────────────────────
-          } else if (DROPDOWN_OPTIONS[col]) {
+           else if (DROPDOWN_OPTIONS[col]) {
             var opts = DROPDOWN_OPTIONS[col];
             var ocDD = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
             cellContent = '<select style="' + inputBase + ';cursor:pointer;" onchange="' + ocDD + '" onclick="event.stopPropagation()">';
@@ -742,10 +765,13 @@ function calculateColumnSums(cells, rows, cols) {
   }
 
   // ── Main render function ─────────────────────────────────────
-  function renderMonitor(container, data, user) {
+  function renderMonitor(container, data, user, overdueMap) {
     var cells  = data.cells   || {};
     var maxRow = data.max_row || 0;
 
+    // Store overdueMap in a closure for use in renderTabHTML
+    window.__overdueMap = overdueMap || {};
+    
     var headerMap = buildHeaderMap(cells);
     var rows      = extractRows(cells, maxRow, user);
     var activeTab = 0;
@@ -802,7 +828,7 @@ function calculateColumnSums(cells, rows, cols) {
       if (activePanel && activeTabDef) {
         activePanel.innerHTML = renderTabHTML(
           cells, rows, allRows, activeTabDef,
-          headerMap, collapseStates[activeTabDef.id] || [], user
+          headerMap, collapseStates[activeTabDef.id] || [], user, overdueMap
         );
       }
     };
@@ -867,7 +893,7 @@ function calculateColumnSums(cells, rows, cols) {
       if (activePanel && activeTabDef) {
         activePanel.innerHTML = renderTabHTML(
           cells, rows, allRows, activeTabDef,
-          headerMap, collapseStates[activeTabDef.id] || [], user
+          headerMap, collapseStates[activeTabDef.id] || [], user, overdueMap
         );
       }
     };
@@ -933,7 +959,7 @@ function calculateColumnSums(cells, rows, cols) {
         (function (t, p) {
           window["__monitorToggleGroup_" + t.id] = function (gi) {
             collapseStates[t.id][gi] = !collapseStates[t.id][gi];
-            p.innerHTML = renderTabHTML(cells, rows, allRows, t, headerMap, collapseStates[t.id], user);
+            p.innerHTML = renderTabHTML(cells, rows, allRows, t, headerMap, collapseStates[t.id], user, overdueMap);
 
             // Re-attach resize handles after re-render
             var table = p.querySelector('.monitor-table');
@@ -946,7 +972,7 @@ function calculateColumnSums(cells, rows, cols) {
         })(tab, panel);
       }
 
-      panel.innerHTML = renderTabHTML(cells, rows, allRows, tab, headerMap, collapseStates[tab.id] || [], user);
+      panel.innerHTML = renderTabHTML(cells, rows, allRows, tab, headerMap, collapseStates[tab.id] || [], user, overdueMap);
 
       // Attach resize handles after rendering
       var table = panel.querySelector('.monitor-table');
@@ -975,9 +1001,10 @@ function calculateColumnSums(cells, rows, cols) {
 function refreshMonitorData(container, currentUser) {
     fetch('/api/monitor/sheet?t=' + Date.now(), { credentials: 'include' })
         .then(response => response.json())
-        .then(data => {
+        .then(result => {
             if (container && typeof renderMonitor === 'function') {
-                renderMonitor(container, data, currentUser);
+                // The response now has { sheet, overdue }
+                renderMonitor(container, result.sheet, currentUser, result.overdue);
             }
         })
         .catch(err => console.error('Failed to refresh monitor:', err));
