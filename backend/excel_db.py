@@ -1924,143 +1924,6 @@ def _start_background_worker():
     _background_thread_started = True
     print("[Background] Excel write worker started")
 
-def _do_excel_write(project_id, updates, role):
-    """Actually write to Excel file (this is the slow part)"""
-    from openpyxl import load_workbook
-    from openpyxl.styles.numbers import is_date_format
-    from datetime import datetime as _dt, timedelta
-    import os
-    
-    projects_dir, _, _, _ = get_discipline_dirs(role)
-    fpath = os.path.join(projects_dir, project_id + ".xlsx")
-    
-    if not os.path.exists(fpath):
-        fpath = os.path.join(projects_dir, project_id + ".xlsb")
-        if not os.path.exists(fpath):
-            print(f"[Background] Excel file not found for {project_id}")
-            return
-    
-    # Load workbook
-    wb = load_workbook(fpath, keep_links=False)
-    ws = wb.active
-
-    # Fix openpyxl bug: integer values in date-formatted cells cause 'int has no attr year'
-    # Scan ALL cells and fix any ints in date-formatted cells
-    for row in ws.iter_rows():
-        for cell in row:
-            # Check if cell has an integer value and date format
-            if isinstance(cell.value, int) and cell.number_format:
-                try:
-                    if is_date_format(cell.number_format):
-                        # Convert Excel serial date integer to Python datetime
-                        try:
-                            # Excel serial date: 1 = 1900-01-01
-                            # openpyxl uses 1899-12-30 as epoch
-                            from openpyxl.utils.datetime import from_excel
-                            cell.value = from_excel(cell.value)
-                        except Exception:
-                            # Fallback manual conversion
-                            epoch = _dt(1899, 12, 30)
-                            cell.value = epoch + timedelta(days=cell.value)
-                except Exception:
-                    pass
-            # Also handle float dates that might be integers
-            elif isinstance(cell.value, float) and cell.number_format:
-                try:
-                    if is_date_format(cell.number_format) and cell.value > 1:
-                        from openpyxl.utils.datetime import from_excel
-                        cell.value = from_excel(cell.value)
-                except Exception:
-                    pass
-    
-    # Apply updates
-    row_updates = {u["_row"]: u for u in updates if "_row" in u}
-    task_updates = {u["task_key"]: u for u in updates if "task_key" in u}
-    
-    TASK_START_ROW = 9
-    TASK_END_ROW = 55
-    
-    for row in range(TASK_START_ROW, TASK_END_ROW + 1):
-        # Row-based update
-        if row in row_updates:
-            u = row_updates[row]
-            if "actual_start" in u and u["actual_start"]:
-                ws[f"X{row}"] = u["actual_start"]
-            if "actual_end" in u and u["actual_end"]:
-                ws[f"Y{row}"] = u["actual_end"]
-            if "percent_complete" in u and u["percent_complete"] is not None:
-                try:
-                    ws[f"Z{row}"] = float(u["percent_complete"]) / 100.0
-                except (ValueError, TypeError):
-                    pass
-            if "help_required" in u:
-                ws[f"AD{row}"] = u["help_required"] or ""
-            if "remark" in u:
-                ws[f"AF{row}"] = u["remark"] or ""
-        
-        # Task-key based update
-        else:
-            code = ws[f"H{row}"].value
-            name = ws[f"I{row}"].value
-            if code and name:
-                row_key = f"{code}_{str(name).strip()}"
-                if row_key in task_updates:
-                    u = task_updates[row_key]
-                    ws[f"Z{row}"] = u["percent_complete"] / 100.0
-                    if "actual_start" in u and u["actual_start"]:
-                        ws[f"X{row}"] = u["actual_start"]
-                    if "actual_end" in u and u["actual_end"]:
-                        ws[f"Y{row}"] = u["actual_end"]
-                    ws[f"AF{row}"] = u.get("remark") or ""
-    
-        # One more pass to catch any remaining ints in date cells before saving
-    for row in ws.iter_rows():
-        for cell in row:
-            # Check if cell has date format
-            is_date_fmt = False
-            try:
-                if cell.number_format:
-                    is_date_fmt = is_date_format(cell.number_format)
-            except Exception:
-                pass
-            
-            # Fix integer in date-formatted cell
-            if is_date_fmt and isinstance(cell.value, int):
-                try:
-                    from openpyxl.utils.datetime import from_excel
-                    # Convert Excel serial date to datetime
-                    if 1 <= cell.value <= 2958465:  # Valid Excel date range
-                        cell.value = from_excel(cell.value)
-                except Exception as e:
-                    print(f"[Background] Could not convert int {cell.value} to date at {cell.coordinate}: {e}")
-                    # If conversion fails, set to None to avoid error
-                    cell.value = None
-            
-            # Also fix float that might be date serial
-            elif is_date_fmt and isinstance(cell.value, float):
-                try:
-                    if cell.value > 1 and cell.value < 100000:
-                        from openpyxl.utils.datetime import from_excel
-                        cell.value = from_excel(cell.value)
-                except Exception:
-                    pass
-    
-    # Save workbook
-    wb.save(fpath)
-    print(f"[Background] Excel file saved: {fpath}")
-
-    # Read sysmemory from the just-saved Excel file (data_only=True).
-    # Runs in the same background thread so it always happens after the
-    # Excel write is fully complete. Multiple saves are serialised by the
-    # queue, so a second save waits its turn before its sysmemory is read.
-    try:
-                # Get the sched_cache directory first
-        _, _, sched_cache, _ = get_discipline_dirs(role)
-        generate_sysmemory_json(fpath, project_id, sched_cache)
-    except Exception as e:
-        print(f"[Background] Sysmemory read failed for {project_id}: {e}")
-
-
 def _read_sysmemory_from_excel(project_id, fpath, role):
     """
     Evaluate sysmemory columns from the Excel file using Pycel (formula-aware)
@@ -2245,22 +2108,26 @@ def update_monitor_cell(department, coord, value, role="sw_tl"):
 
 def read_sysmemory_json(project_id, role="sw_tl"):
     """
-    Read sysmemory JSON for a project and extract task overdue status.
-    Returns dict: { task_name: { "PLRedActivity": 0/1, "PMRedActivity": 0/1 } }
+    Read sysmemory JSON for a project and extract task data.
+    Hardcoded column mapping for speed and reliability.
+    Returns dict: { task_name: { "PLRedActivity": 0/1, "PMRedActivity": 0/1, 
+                                  "AlertDtYellow": 0/1, "ProgressFlag": 0-7 } }
     """
     import json
     import os
     
-    # Map role to discipline
     role_to_dept = {
-        "sw_tl": "SW",
-        "hw_tl": "HW",
-        "mfg_tl": "MFG",
-        "pm": "PM",
-        "admin": "SW",
-        "head": "SW"
+        "sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG",
+        "pm": "PM", "admin": "SW", "head": "SW"
     }
     department = role_to_dept.get(role, "SW")
+    
+    # Hardcoded column letters
+    TASK_NAME_COL = "I"
+    PL_RED_COL = "DC"
+    PM_RED_COL = "CY"
+    ALERT_DT_COL = "DH"
+    PROGRESS_FLAG_COL = "DD"
     
     # Path to sysmemory JSON
     sysmemory_path = os.path.join(DATA_DIR, department, "cache", "system_memory", f"{project_id}_sysmemory.json")
@@ -2273,17 +2140,7 @@ def read_sysmemory_json(project_id, role="sw_tl"):
         with open(sysmemory_path, 'r') as f:
             data = json.load(f)
         
-        # The sysmemory JSON structure has "rows" with task data
-        # Task rows are from 9 to 55
         rows = data.get("rows", {})
-        task_columns = data.get("task_cols", [])
-        
-        # Find which columns are PLRedActivity and PMRedActivity
-        # Based on your sysmemory structure, these are likely in task_cols
-        # You need to identify the exact column letters
-        # For now, assuming they are named "PLRedActivity" and "PMRedActivity"
-        
-        # Build task map
         task_map = {}
         
         # Loop through task rows (9 to 55)
@@ -2294,57 +2151,103 @@ def read_sysmemory_json(project_id, role="sw_tl"):
             
             row_data = rows[row_key]
             
-            # Get task name - usually in column "I" or similar
-            # You need to confirm which column holds task name in sysmemory
-            task_name = row_data.get("I", "")  # Adjust column letter as needed
+            # Get task name from hardcoded column I
+            task_name = row_data.get(TASK_NAME_COL, "")
             
             if not task_name or not str(task_name).strip():
                 continue
             
             task_name = str(task_name).strip()
             
-            # Get overdue flags - adjust column letters as needed
-            pl_red = row_data.get("PLRedActivity", 0)
-            pm_red = row_data.get("PMRedActivity", 0)
+            # Get values from hardcoded columns
+            pl_red = row_data.get(PL_RED_COL, 0)
+            pm_red = row_data.get(PM_RED_COL, 0)
+            alert_dt = row_data.get(ALERT_DT_COL, 0)
+            progress_flag = row_data.get(PROGRESS_FLAG_COL, 0)
             
-            # Convert to int if needed
+            # Convert to int
             try:
                 pl_red = int(pl_red) if pl_red else 0
                 pm_red = int(pm_red) if pm_red else 0
+                alert_dt = int(alert_dt) if alert_dt else 0
+                progress_flag = int(progress_flag) if progress_flag else 0
             except (ValueError, TypeError):
                 pl_red = 0
                 pm_red = 0
+                alert_dt = 0
+                progress_flag = 0
             
             task_map[task_name] = {
                 "PLRedActivity": pl_red,
-                "PMRedActivity": pm_red
+                "PMRedActivity": pm_red,
+                "AlertDtYellow": alert_dt,
+                "ProgressFlag": progress_flag
             }
+            
+            if pl_red == 1 or pm_red == 1 or alert_dt == 1 or progress_flag > 0:
+                print(f"[Sysmemory] Task '{task_name}' - PLRed: {pl_red}, PMRed: {pm_red}, AlertDt: {alert_dt}, ProgressFlag: {progress_flag}")
         
+        print(f"[Sysmemory] Loaded {len(task_map)} tasks for {project_id}")
         return task_map
         
     except Exception as e:
         print(f"[Sysmemory] Error reading {project_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return {}
 
 def load_user_overdue_status(user):
     """
     Load overdue status for all projects assigned to the user.
-    Returns dict: { project_id: { task_name: { PLRedActivity, PMRedActivity } } }
+    If sysmemory JSON doesn't exist, generate it.
     """
     from datetime import datetime
+    import os
     
     print(f"[Overdue] Loading overdue status for user: {user.get('username')}")
     
     # Get projects for this user
     projects = get_projects_for_user(user)
+    print(f"[Overdue] Found {len(projects)} projects for user")
     
     overdue_map = {}
     role = user.get("role", "sw_tl")
     
+    # Get discipline directories
+    projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
+    
+    # Map role to department
+    role_to_dept = {
+        "sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG",
+        "pm": "PM", "admin": "SW", "head": "SW"
+    }
+    department = role_to_dept.get(role, "SW")
+    
     for project in projects:
         project_id = project.get("file_id") or project.get("id")
+        print(f"[DEBUG] project_id key: '{project_id}'")  # <-- ADD THIS LINE
         if not project_id:
             continue
+        
+        print(f"[Overdue] Processing project: {project_id}")
+        
+        # Path to sysmemory JSON
+        sysmemory_path = os.path.join(DATA_DIR, department, "cache", "system_memory", f"{project_id}_sysmemory.json")
+        
+        # If sysmemory JSON doesn't exist, generate it
+        if not os.path.exists(sysmemory_path):
+            print(f"[Overdue] Generating sysmemory for {project_id}")
+            # Find the Excel file path
+            excel_path = os.path.join(projects_dir, project_id + ".xlsx")
+            if not os.path.exists(excel_path):
+                excel_path = os.path.join(projects_dir, project_id + ".xlsb")
+            
+            if os.path.exists(excel_path):
+                from excel_db import generate_sysmemory_json
+                generate_sysmemory_json(excel_path, project_id, sched_cache)
+            else:
+                print(f"[Overdue] Excel file not found for {project_id}")
+                continue
         
         # Read sysmemory for this project
         task_map = read_sysmemory_json(project_id, role)
@@ -2352,9 +2255,130 @@ def load_user_overdue_status(user):
         if task_map:
             overdue_map[project_id] = task_map
             print(f"[Overdue] Loaded {len(task_map)} tasks for {project_id}")
+        else:
+            print(f"[Overdue] No tasks loaded for {project_id}")
     
     print(f"[Overdue] Total projects loaded: {len(overdue_map)}")
     return overdue_map
+
+def _fix_int_dates(ws):
+    """
+    Scan every cell in ws and fix any int/float sitting in a date-formatted cell.
+    openpyxl crashes on wb.save() with 'int has no attribute year' when such cells
+    exist. Must be called on every workbook before saving.
+    """
+    from openpyxl.styles.numbers import is_date_format as _idf
+    from openpyxl.utils.datetime import from_excel as _fxl
+    from datetime import datetime as _dt, timedelta
+
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value is None:
+                continue
+            try:
+                if not cell.number_format or not _idf(cell.number_format):
+                    continue
+            except Exception:
+                continue
+            if isinstance(cell.value, int):
+                try:
+                    if 1 <= cell.value <= 2958465:
+                        cell.value = _fxl(cell.value)
+                    else:
+                        cell.value = None
+                except Exception:
+                    try:
+                        cell.value = _dt(1899, 12, 30) + timedelta(days=cell.value)
+                    except Exception:
+                        cell.value = None
+            elif isinstance(cell.value, float):
+                try:
+                    if 1 < cell.value < 2958465:
+                        cell.value = _fxl(cell.value)
+                    else:
+                        cell.value = None
+                except Exception:
+                    cell.value = None
+
+
+def _do_excel_write(project_id, updates, role):
+    """Actually write to Excel file (this is the slow part)"""
+    from openpyxl import load_workbook
+    import os
+
+    projects_dir, _, _, _ = get_discipline_dirs(role)
+    fpath = os.path.join(projects_dir, project_id + ".xlsx")
+
+    if not os.path.exists(fpath):
+        fpath = os.path.join(projects_dir, project_id + ".xlsb")
+        if not os.path.exists(fpath):
+            print(f"[Background] Excel file not found for {project_id}")
+            return
+
+    try:
+        wb = load_workbook(fpath, keep_links=False)
+    except Exception as e:
+        print(f"[Background] Error loading {project_id}: {e}")
+        return
+
+    ws = wb.active
+
+    # Fix all int/float values sitting in date-formatted cells BEFORE updates
+    _fix_int_dates(ws)
+
+    # Apply updates
+    row_updates  = {u["_row"]:      u for u in updates if "_row"      in u}
+    task_updates = {u["task_key"]:  u for u in updates if "task_key"  in u}
+
+    TASK_START_ROW = 9
+    TASK_END_ROW   = 55
+
+    for row in range(TASK_START_ROW, TASK_END_ROW + 1):
+        if row in row_updates:
+            u = row_updates[row]
+            if "actual_start" in u and u["actual_start"]:
+                ws[f"X{row}"] = u["actual_start"]
+            if "actual_end" in u and u["actual_end"]:
+                ws[f"Y{row}"] = u["actual_end"]
+            if "percent_complete" in u and u["percent_complete"] is not None:
+                try:
+                    ws[f"Z{row}"] = float(u["percent_complete"]) / 100.0
+                except (ValueError, TypeError):
+                    pass
+            if "help_required" in u:
+                ws[f"AD{row}"] = u["help_required"] or ""
+            if "remark" in u:
+                ws[f"AF{row}"] = u["remark"] or ""
+        else:
+            code = ws[f"H{row}"].value
+            name = ws[f"I{row}"].value
+            if code and name:
+                row_key = f"{code}_{str(name).strip()}"
+                if row_key in task_updates:
+                    u = task_updates[row_key]
+                    ws[f"Z{row}"] = u["percent_complete"] / 100.0
+                    if "actual_start" in u and u["actual_start"]:
+                        ws[f"X{row}"] = u["actual_start"]
+                    if "actual_end" in u and u["actual_end"]:
+                        ws[f"Y{row}"] = u["actual_end"]
+                    ws[f"AF{row}"] = u.get("remark") or ""
+
+    # Fix again after updates in case any new values landed in date-formatted cells
+    _fix_int_dates(ws)
+
+    try:
+        wb.save(fpath)
+        print(f"[Background] Excel file saved: {fpath}")
+    except Exception as e:
+        print(f"[Background] Error writing {project_id}: {e}")
+        return
+
+    # Regenerate sysmemory from the freshly saved file
+    try:
+        _, _, sched_cache, _ = get_discipline_dirs(role)
+        generate_sysmemory_json(fpath, project_id, sched_cache)
+    except Exception as e:
+        print(f"[Background] Sysmemory read failed for {project_id}: {e}")
 
 def queue_excel_write(project_id, updates, role):
     """Queue a project for background Excel write"""
@@ -2413,6 +2437,9 @@ def _do_monitor_excel_write(department, updates):
             # No conversion needed for non-date cells
             
             cell.value = value
+
+        # Fix any pre-existing int/float values in date-formatted cells before saving
+        _fix_int_dates(ws)
 
         wb.save(monitor_path)
         print(f"[Monitor Background] Excel saved: {monitor_path}")

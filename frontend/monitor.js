@@ -24,7 +24,7 @@
   // ── Constants ───────────────────────────────────────────────
   var HEADER_ROW = 10;
   var DATA_START = 12;
-  var ID_COL     = "F";
+  var ID_COL     = "B";
 
   // ═══════════════════════════════════════════════════════════
   //  EDITABLE COLUMN CONFIG
@@ -339,7 +339,7 @@ function calculateColumnSums(cells, rows, cols) {
     ] : [
       { columns: ["M","G","K","L","F","O","P","Q","R","S","T","U","V","W","X","Y","Z","AA","AB","AC","AD","AE","AF","AG","AH","AI","AJ","AK","AL","AM","AN","AO","AQ","BA"], color: "#747070" },
       { columns: ["E","N","I","J","C","D","AR","AP"], color: "#90b4df" },
-      { columns: ["H","BB","BC","BD","BE","BF","BG","BH","BI","BJ","BK","BL","BM","BN","BO","BP","BQ","BR","BS","BT","BU","BV","BW"], color: "#191616" },
+      { columns: ["H"], color: "#191616" },
     ];
 
     var textColorRules = isDark ? [
@@ -348,7 +348,7 @@ function calculateColumnSums(cells, rows, cols) {
       { columns: ["M"], color: "#ffcc66" },
     ] : [
       { columns: ["F","H","O","P","Q","R","S","T","U","V","W","X","Y","Z","AA","AB","AC","AD","AE","AF","AG","AH","AI","AJ","AK","AL","AM","AN","AO","AQ"], color: "#ffba26" },
-      { columns: ["M","G","BB","BC","BD","BE","BF","BG","BH","BI","BJ","BK","BL","BM","BN","BO","BP","BQ","BR","BS","BT","BU","BV","BW"], color: "#ffffff" },
+      { columns: ["M","G"], color: "#ffffff" },
     ];
 
     function getCellBg(col) {
@@ -487,6 +487,10 @@ function calculateColumnSums(cells, rows, cols) {
     // ── ROW 2: Column name row ────────────────────────────────
     html += '<tr>';
     
+    // Overview already has # with rowspan="3" from group button row — don't add again
+    if (!colGroups || !colGroups.length) {
+        html += '<th class="monitor-th monitor-th-num">#</th>';
+    }
     cols.forEach(function (col) {
       if (hidden(col)) return;
       var gi = colToGroup[col];
@@ -495,7 +499,8 @@ function calculateColumnSums(cells, rows, cols) {
       var w = colWidth(col);
       extraStyle += "width:" + w + " !important;max-width:" + w + " !important;";
       var headerText = headerMap[col] || col;
-      html += '<th class="monitor-th" style="' + extraStyle + '" title="' + esc(headerText) + '">' + esc(headerText) + '</th>';
+      var wrapStyle = isMilestone ? "white-space:normal;word-break:break-word;line-height:1.2;padding:4px 2px;text-align:center;font-size:9px;" : "";
+      html += '<th class="monitor-th" style="' + extraStyle + wrapStyle + '" title="' + esc(headerText) + '">' + esc(headerText) + '</th>';
     });
     html += '</tr></thead><tbody>';
 
@@ -666,31 +671,51 @@ function calculateColumnSums(cells, rows, cols) {
             if (pct < 0) pct = 0;
             if (pct > 100) pct = 100;
             
-            // Check if this task is overdue for the user's role
-            var taskName = headerMap[col]; // Column header is the task name
-            var projectId = cv(cells, "F", r); // Get project ID from column F at this row
-            
-            var isOverdue = false;
+            var taskName = (headerMap[col] || "").trim();
+            var projectId = cv(cells, "B", r);
             var userRole = (user && user.role) || "";
+            var textColor = "#ffffff";
+            var bgColor = "#000000";
             
             if (overdueMap && projectId && overdueMap[projectId]) {
               var projectTasks = overdueMap[projectId];
               if (projectTasks && projectTasks[taskName]) {
                 var taskStatus = projectTasks[taskName];
+                
+                // Text color — independent of bg
                 if (userRole === "sw_tl" && taskStatus.PLRedActivity === 1) {
-                  isOverdue = true;
+                    textColor = "#ff4444";
                 } else if (userRole === "head" && taskStatus.PMRedActivity === 1) {
-                  isOverdue = true;
+                    textColor = "#ff4444";
+                } else if (taskStatus.AlertDtYellow === 1) {
+                    textColor = "#ffcc00";
+                }
+                
+                // Priority 3: Progress Flag background color
+                var progressFlag = taskStatus.ProgressFlag || 0;
+                if (progressFlag >= 1 && progressFlag <= 7) {
+                  var progressColors = {
+                    1: "#ffb3b3",  // Engineering
+                    2: "#5f933c",  // Purchase
+                    3: "#0096cc",  // Software
+                    4: "#005fa3",  // Project Management
+                    5: "#2f491e",  // Manufacturing
+                    6: "#00d9d9",  // Sales
+                    7: "#6d006d"   // Client
+                  };
+                  bgColor = progressColors[progressFlag];                      
                 }
               }
             }
             
-            // Apply red styling if overdue
-            if (isOverdue) {
-              style = "background-color:#ff4444 !important;color:#ffffff !important;font-weight:bold !important;";
-            }
-            
-            cellContent = pct + '%';
+            // Build style string and emit TD immediately — cannot reuse styleAttr
+            // because it was already frozen before this block ran
+            var cellStyle = "";
+            if (bgColor)   cellStyle += "background-color:" + bgColor + ";";
+            if (textColor) cellStyle += "color:" + textColor + ";font-weight:bold;";
+
+            html += '<td class="monitor-td"' + (cellStyle ? ' style="' + cellStyle + '"' : '') + ' title="' + esc(val) + '">' + pct + '%</td>';
+            return; // skip the generic html+= at the bottom of the loop
           }
           // ── 2. DROPDOWN: N and AP ───────────────────────────
            else if (DROPDOWN_OPTIONS[col]) {

@@ -9,6 +9,49 @@ var state = {
   sheetCache: {},  // project_id -> sheet data, client-side cache
 };
 
+// ── Column width configuration (percentage-based, similar to monitor) ──
+var SHEET_COL_WIDTHS = {
+  // Default width for all columns (percentage)
+  _default: "5%",
+  
+  // Specific column overrides
+  "E": "2%",   // Buffer Time
+  "F": "2%",   // PH
+  "G": "2%",   // TFO
+  "H": "2.5%",   // Phase ID
+  "I": "6%",  // Task Description (wider)
+  "J": "5%",   // P1 Start Date
+  "K": "5%",   // P1 End Date
+  "L": "5%",   // P2 Start Date
+  "M": "5%",   // P2 End Date
+  "N": "5%",   // P3 Start Date
+  "O": "5%",   // P3 End Date
+  "P": "4%",   // Org Plan Date
+  "Q": "4%",   // Org End Date
+  "R": "4%",   // Ref. Lead Time
+  "S": "2.5%",   // Lead Time
+  "T": "2%",   // Intlk
+  "U": "2.5%",   // Effort Days
+  "V": "4%",   // Cur. Start Date
+  "W": "4%",   // Cur. End Date
+  "X": "4.5%",   // Act. Start Date
+  "Y": "4.5%",   // Act. End Date
+  "Z": "3%",   // % Complete
+  "AA": "3%",  // Exptd % Completion
+  "AB": "4%",  // Alert Date for 80%
+  "AD": "5%",  // Help Req. from
+  "AF": "7%", // Remark
+};
+
+// ── Column group definitions for project sheet (hardcoded, single group J-R) ──
+var PROJECT_COL_GROUPS = [
+    { key: "planning_dates", label: "Planning Dates", cols: ["J","K","L","M","N","O","P","Q","R"] }
+];
+
+function getSheetColumnWidth(col) {
+  return SHEET_COL_WIDTHS[col] || SHEET_COL_WIDTHS._default;
+}
+
 function applyTheme(t) {
   state.theme = t;
   document.documentElement.setAttribute("data-theme", t);
@@ -221,9 +264,9 @@ function renderShell() {
       '<div class="shell-body">',
         '<aside class="sidebar" id="master-sidebar">',
           '<div class="master-sidebar-header">',
-  '<div class="master-sidebar-title">My Files</div>',
-  '<button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Close sidebar">&#8249;</button>',
-'</div>',
+            '<div class="master-sidebar-title">My Files</div>',
+            '<button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Close sidebar">&#8249;</button>',
+          '</div>',
           '<div class="master-pane-list" id="master-list">',
             '<div class="master-empty">Loading...</div>',
           '</div>',
@@ -267,6 +310,10 @@ function toggleSidebar() {
   if (btn) btn.innerHTML = collapsed ? "&#8250;" : "&#8249;";
   // save-bar left: rail width when collapsed, full width when open
   if (saveBar) saveBar.style.left = collapsed ? "var(--sidebar-rail)" : "var(--sidebar-w)";
+  // Refresh file status when sidebar OPENS (not collapsed)
+  if (!collapsed) {
+    refreshFileStatusOnOpen();
+  }
 }
 
 function handleThemeToggle(e) {
@@ -500,7 +547,13 @@ function renderMasterList(masterList, projects) {
       filterMasterList(e.target.value);
     });
   }
-
+  // Bind refresh button event
+  var refreshBtn = document.getElementById("refresh-file-status-btn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function() {
+      refreshFileStatusOnOpen();
+    });
+  }
   // Initial render
   filterMasterList("");
 }
@@ -1063,7 +1116,7 @@ function renderExcelMirror(container, data) {
   console.log("All columns in grid:", cols);
   console.log("Does column R exist in cols?", cols.indexOf("R") !== -1);
   console.log("Index of R:", cols.indexOf("R"));
-  var colGroups    = data.col_groups || [];
+  var colGroups    = PROJECT_COL_GROUPS;
   var editableFill = data.editable_fill || null;
   var infoRows     = data.info_rows    || [];
   var headerRows   = data.header_rows  || [];
@@ -1239,8 +1292,8 @@ function renderExcelMirror(container, data) {
     return input;
   }
 
-  // Track collapse state per group
-  var collapseState = colGroups.map(function(g) { return g.collapsed === true; });
+  // Track collapse state per group - START COLLAPSED
+  var collapseState = colGroups.map(function(g) { return true; });
 
   // Fast lookup: col_letter -> groupIndex
   var colToGroup = {};
@@ -1416,6 +1469,24 @@ function renderExcelMirror(container, data) {
   var xlGroupBarBorder = isDark ? "#2a4a38" : "#b8d8c8";
 
   function buildTable() {
+   // Calculate total percentage width of ALL columns (including hidden/collapsed ones)
+    // This ensures the table expands beyond 100% when groups are expanded
+    // Sum ONLY visible (non-collapsed) columns — mirrors monitor.js computeOverviewTableWidth()
+// This makes the table grow when groups expand, so existing columns never shift
+    var totalWidthPct = 0;
+    for (var ci = 0; ci < cols.length; ci++) {
+      var colCheck = cols[ci];
+      if (colCheck === "AC" || colCheck === "AE") continue;
+      if (isCollapsedCol(colCheck)) continue;  // ← skip hidden cols
+      var w = getSheetColumnWidth(colCheck);
+      var pctVal = parseFloat(w);
+      if (!isNaN(pctVal)) totalWidthPct += pctVal;
+    }
+    totalWidthPct += 3; // row number column buffer
+    // If visible columns fit within 100%, keep table at 100% (no scroll)
+    // If they exceed it, let the table grow so new cols push right
+    var tableWidthVal = totalWidthPct <= 100 ? "100%" : totalWidthPct + "%";
+
     var tableStyle = [
       "border-collapse:collapse",
       "table-layout:fixed",
@@ -1423,6 +1494,7 @@ function renderExcelMirror(container, data) {
       "font-size:11px",
       "background:" + xlBg,
       "color:" + xlText,
+      "width:" + tableWidthVal + "%",  // ✅ Table width expands based on ALL columns
     ].join(";");
 
     // ── Build left panel HTML ────────────────────────────────
@@ -1520,15 +1592,15 @@ function renderExcelMirror(container, data) {
     leftPanelHtml += '</div>'; // end inner
     leftPanelHtml += '</div>'; // end panel
 
-    var html = '<div style="display:flex;flex-direction:column;height:calc(115vh - var(--topbar-h) - 36px);position:relative;background:' + xlBg + ';overflow:hidden;">';
+    var html = '<div style="display:flex;flex-direction:column;flex: 1;min-height: 0;position:relative;background:' + xlBg + ';overflow:hidden;">';
     html += '<div style="flex-shrink:0;overflow:hidden;">' + bannerHtml + '</div>';
     html += '<div style="display:flex;flex:1;min-height:0;overflow:hidden;">';
     html += leftPanelHtml;
-    html += '<div style="overflow:auto;flex:1;position:relative;">';
+    html += '<div style="overflow-x:auto;overflow-y:auto;flex:1;position:relative;">';
     html += '<table style="' + tableStyle + '">';
     html += '<thead>';
 
-          if (colGroups.length > 0) {
+    if (colGroups.length > 0) {
       // ── GROUP BAR ROW (buttons with borders) ──
       html += '<tr style="height:20px;">';
 
@@ -1546,27 +1618,27 @@ function renderExcelMirror(container, data) {
           
           if (!collapsed) {
             // Expanded: show button above the first column of the group
-            var firstW = colWidths[group.cols[0]] || 64;
-            html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;text-align:left;padding:0 0 0 6px;width:' + firstW + 'px;">';
+            var firstW = getSheetColumnWidth(group.cols[0]);  // ✅ CHANGED: use percentage
+            html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;text-align:left;padding:0 0 0 6px;width:' + firstW + ';">';  // ✅ CHANGED: removed "px"
             html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button>';
             html += '</th>';
             // Empty cells for the remaining columns in the group
             for (var gci = 1; gci < group.cols.length; gci++) {
-              var gcw = colWidths[group.cols[gci]] || 64;
-              html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;width:' + gcw + 'px;"></th>';
+              var gcw = getSheetColumnWidth(group.cols[gci]);  // ✅ CHANGED: use percentage
+              html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;width:' + gcw + ';"></th>';  // ✅ CHANGED: removed "px"
             }
           } else {
             // Collapsed: show button above the last column of the group (the only visible one)
             var lastCol = group.cols[group.cols.length - 1];
-            var lastW   = colWidths[lastCol] || 64;
-            html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;text-align:left;padding:0 0 0 6px;width:' + lastW + 'px;">';
+            var lastW   = getSheetColumnWidth(lastCol);  // ✅ CHANGED: use percentage
+            html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;text-align:left;padding:0 0 0 6px;width:' + lastW + ';">';  // ✅ CHANGED: removed "px"
             html += '<button style="' + btnStyle + '" onclick="__xlToggleGroup(' + gi + ')">' + btnLabel + '</button>';
             html += '</th>';
           }
           ci += group.cols.length;
         } else {
-          var cw = colWidths[col] || 64;
-          html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;width:' + cw + 'px;"></th>';
+          var cw = getSheetColumnWidth(col);  // ✅ CHANGED: use percentage
+          html += '<th style="position:sticky;top:0;z-index:4;background:transparent;border:none;width:' + cw + ';"></th>';  // ✅ CHANGED: removed "px"
           ci++;
         }
       }
@@ -1650,14 +1722,14 @@ function renderExcelMirror(container, data) {
       var chCol = cols[chi];
       if (chCol === "AC" || chCol === "AE") continue;
       if (isCollapsedCol(chCol)) continue;
-      var chCw = colWidths[chCol] || 64;
+      var chCw = getSheetColumnWidth(chCol);
       var chDef = chDefs[chCol] || {};
       var chBg = chDef.bg || chFallbackBg;
       var chFg = chDef.fg || chFallbackFg;
       var chLabel = chDef.label || chCol;
       var chStyle = [
-        "width:" + chCw + "px",
-        "min-width:" + chCw + "px",
+        "width:" + chCw,
+        "min-width:" + chCw,
         "background:" + chBg,
         "color:" + chFg,
         "font-family:Calibri,Arial,sans-serif",
@@ -1736,35 +1808,16 @@ function renderExcelMirror(container, data) {
         var coord = col3 + r;
         var info  = cells[coord];
 
-            // DEBUG: Check column R
-      if (col3 === "R" && r >= 9 && r <= 16) {
-          console.log("Column R, Row", r);
-          console.log("  isCollapsedCol?", isCollapsedCol(col3));
-          console.log("  info object:", info);
-          console.log("  info.v:", info ? info.v : "no info");
-      }
-
-              // Check if column R is in a collapsed group
-        if (col3 === "R" && r >= 9 && r <= 16) {
-            var gi = colToGroup["R"];
-            if (gi !== undefined) {
-                console.log("  Group index:", gi);
-                console.log("  Group collapsed state:", collapseState[gi]);
-                console.log("  Group columns:", colGroups[gi] ? colGroups[gi].cols : "no group");
-            } else {
-                console.log("  Not in any group");
-            }
-        }
         // skip all cols in a collapsed group
         if (isCollapsedCol(col3)) continue;
 
         // merged slave — skip
         if (info && info.skip) continue;
 
-        var cw3 = colWidths[col3] || 64;
+        var cw3 = getSheetColumnWidth(col3);
         var tdStyle = [
-          "width:" + cw3 + "px",
-          "min-width:" + cw3 + "px",
+          "width:" + cw3,
+          "min-width:" + cw3,
           "overflow:hidden",
           "padding:1px 3px",
           "border:1px solid " + xlCellBorder,
@@ -2198,6 +2251,41 @@ function showUserModal(user) {
   document.body.appendChild(overlay);
 }
 
+async function refreshFileStatusOnOpen() {
+  try {
+    var result = await API.req("POST", "/refresh-file-status");
+    var updatedProjects = result.projects;
+    
+    if (updatedProjects && window._masterListFull) {
+      var updatedStatusMap = {};
+      updatedProjects.forEach(function(p) {
+        updatedStatusMap[p.project_id] = p.file_exists;
+      });
+      
+      // Update global master list
+      window._masterListFull.forEach(function(project) {
+        if (updatedStatusMap.hasOwnProperty(project.project_id)) {
+          project.file_exists = updatedStatusMap[project.project_id];
+        }
+      });
+      
+      if (window._masterList) {
+        window._masterList.forEach(function(project) {
+          if (updatedStatusMap.hasOwnProperty(project.project_id)) {
+            project.file_exists = updatedStatusMap[project.project_id];
+          }
+        });
+      }
+      
+      // Re-render the sidebar
+      var searchTerm = document.getElementById("master-search-input")?.value || "";
+      filterMasterList(searchTerm);
+    }
+  } catch(err) {
+    console.error("Failed to refresh file status:", err);
+  }
+}
+
 async function doSaveUser(existingUsername) {
   var isEdit = !!existingUsername;
   var btn    = document.getElementById("um-save-btn");
@@ -2248,59 +2336,101 @@ window.addEventListener("DOMContentLoaded", init);
 // __Rendering the monitoring grid______________________________
 
 function renderMonitorGrid(container, data) {
-    // Simplified grid renderer for monitor screen
-    var cells = data.cells;
-    var colWidths = data.col_widths;
+    var cells      = data.cells;
     var rowHeights = data.row_heights;
-    var maxRow = data.max_row;
-    var cols = data.cols;
-    
+    var maxRow     = data.max_row;
+    var cols       = data.cols;
+
     var isDark = document.documentElement.getAttribute("data-theme") !== "light";
-    
-    // Simple styling
+
+    var borderColor = isDark ? "#3a3a3a" : "#d0d0d0";
+    var numBg       = isDark ? "#242424" : "#e8e8e8";
+    var headerBg    = isDark ? "#2a2a2a" : "#f2f2f2";
+    var evenRowBg   = isDark ? "#242424" : "#f7f9fc";
+    var oddRowBg    = isDark ? "#1e1e1e" : "#ffffff";
+
+    // ── Compute total % width so table can expand beyond 100%
+    //    when many columns are present (mirrors monitor.js logic)
+    var totalPct = 2; // ~36px # col ≈ 2%
+    for (var ci = 0; ci < cols.length; ci++) {
+        var w = getSheetColumnWidth(cols[ci]);
+        if (w.indexOf("%") !== -1) totalPct += parseFloat(w) || 0;
+    }
+    var tableWidth = totalPct <= 100 ? "100%" : totalPct + "%";
+
     var tableStyle = [
         "border-collapse:collapse",
-        "table-layout:fixed",
+        "table-layout:fixed",          // fixed layout — widths come from <colgroup>
+        "width:" + tableWidth,         // lets % cols distribute properly
         "font-family:Calibri,Arial,sans-serif",
         "font-size:11px",
-        "background:" + (isDark ? "#1e1e1e" : "#ffffff"),
+        "background:" + oddRowBg,
         "color:" + (isDark ? "#e0e0e0" : "#000000"),
-        "width:100%"
     ].join(";");
-    
-    var html = '<table style="' + tableStyle + '">';
-    
-    // Header row
-    html += '<thead><tr style="background:' + (isDark ? "#2a2a2a" : "#f2f2f2") + ';">';
-    html += '<th style="position:sticky;left:0;background:' + (isDark ? "#242424" : "#e8e8e8") + ';border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';min-width:28px;width:28px;padding:4px;">#</th>';
-    
+
+html += '<table style="' + tableStyle + '">';
+
+// ── <colgroup> — this is what drives % column widths ─────────
+html += '<colgroup>';
+html += '<col style="width:36px;">';  // # column
+for (var ci0 = 0; ci0 < cols.length; ci0++) {
+  var col0 = cols[ci0];  // ✅ ci0 matches
+  if (col0 === "AC" || col0 === "AE") continue;
+  if (isCollapsedCol(col0)) continue;
+  html += '<col style="width:' + getSheetColumnWidth(col0) + ';">';
+}
+html += '</colgroup>';
+
+    // ── Header row ───────────────────────────────────────────────
+    html += '<thead><tr style="background:' + headerBg + ';">';
+    html += '<th style="'
+        + 'position:sticky;left:0;z-index:2;'
+        + 'background:' + numBg + ';'
+        + 'border:1px solid ' + borderColor + ';'
+        + 'width:36px;min-width:36px;'
+        + 'padding:4px;text-align:center;font-weight:600;">#</th>';
+
     for (var ci = 0; ci < cols.length; ci++) {
         var col = cols[ci];
-        var cw = colWidths[col] || 64;
-        html += '<th style="border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';width:' + cw + 'px;min-width:' + cw + 'px;padding:4px;text-align:center;font-weight:600;">' + col + '</th>';
+        // No inline width needed — <colgroup> drives it in table-layout:fixed
+        html += '<th style="'
+            + 'border:1px solid ' + borderColor + ';'
+            + 'padding:4px 6px;text-align:center;font-weight:600;'
+            + 'white-space:normal;word-break:break-word;line-height:1.3;'
+            + 'vertical-align:middle;overflow:hidden;">'
+            + h(col) + '</th>';
     }
     html += '</tr></thead>';
-    
-    // Body rows
+
+    // ── Body rows ────────────────────────────────────────────────
     html += '<tbody>';
     for (var r = 1; r <= maxRow; r++) {
-        var rh = rowHeights[String(r)] || 20;
-        var rowBg = (r % 2 === 0) ? (isDark ? "#242424" : "#f7f9fc") : (isDark ? "#1e1e1e" : "#ffffff");
-        
+        var rh     = rowHeights[String(r)] || 20;
+        var rowBg  = (r % 2 === 0) ? evenRowBg : oddRowBg;
+
         html += '<tr style="height:' + rh + 'px;background:' + rowBg + ';">';
-        html += '<td style="position:sticky;left:0;background:' + (isDark ? "#242424" : "#e8e8e8") + ';border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';text-align:center;">' + r + '</td>';
-        
+        html += '<td style="'
+            + 'position:sticky;left:0;z-index:1;'
+            + 'background:' + numBg + ';'
+            + 'border:1px solid ' + borderColor + ';'
+            + 'text-align:center;font-size:11px;color:' + (isDark ? "#888" : "#999") + ';">'
+            + r + '</td>';
+
         for (var ci = 0; ci < cols.length; ci++) {
-            var col = cols[ci];
+            var col   = cols[ci];
             var coord = col + r;
-            var info = cells[coord];
+            var info  = cells[coord];
             var value = (info && info.v !== undefined && info.v !== null) ? h(String(info.v)) : "";
-            
-            html += '<td style="border:1px solid ' + (isDark ? "#3a3a3a" : "#d0d0d0") + ';padding:2px 4px;">' + value + '</td>';
+
+            html += '<td style="'
+                + 'border:1px solid ' + borderColor + ';'
+                + 'padding:2px 4px;'
+                + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+                + value + '</td>';
         }
         html += '</tr>';
     }
     html += '</tbody></table>';
-    
+
     container.innerHTML = html;
 }

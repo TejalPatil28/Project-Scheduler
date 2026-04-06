@@ -19,6 +19,7 @@ from excel_db import (
     OWNER_MAP,
     update_monitor_cell,
     update_monitor_timestamp,
+    load_user_overdue_status,
 )
 
 app = Flask(__name__, static_folder=None)
@@ -82,7 +83,7 @@ def login():
 
     session["username"] = user["username"]
 
-     # Load overdue status for this user and store in session
+    # Load overdue status for this user and store in session
     from excel_db import load_user_overdue_status
     session["overdue_map"] = load_user_overdue_status(user)
 
@@ -160,12 +161,11 @@ def save_tasks(project_id):
         return jsonify({"error": "Expected list of task updates"}), 400
 
     # Verify each task's owner matches user role (unless admin/head/pm)
-    # Row-based updates (from sheet input cells, have _row key) bypass this check
     if role not in ("admin", "head", "pm"):
         allowed_owner = OWNER_MAP.get(role)
         for item in data:
             if "_row" in item:
-                continue  # row-based sheet edits skip owner check
+                continue
             if item.get("owner") != allowed_owner:
                 return jsonify({"error": f"You can only update {allowed_owner} tasks"}), 403
 
@@ -173,16 +173,27 @@ def save_tasks(project_id):
     if not ok:
         return jsonify({"error": msg}), 404
 
-    # Reload the in-memory cache from the JSON sidecar that _update_sheet_cache
-    # just wrote. This ensures the next sheet fetch returns the updated cell values,
-    # not the stale pre-save data that was sitting in _sheet_cache.
+    # AFTER SAVE: Refresh the overdue_map for this project in session
+    from excel_db import read_sysmemory_json
+    overdue_map = session.get("overdue_map", {})
+    
+    # Refresh this project's data
+    fresh_task_map = read_sysmemory_json(project_id, role)
+    if fresh_task_map:
+        overdue_map[project_id] = fresh_task_map
+    else:
+        # If no data, remove from map
+        overdue_map.pop(project_id, None)
+    
+    session["overdue_map"] = overdue_map
+
+    # Reload the in-memory cache
     from excel_db import _read_sheet_cache, get_discipline_dirs
     _, _, sched_cache, _ = get_discipline_dirs(role)
     fresh = _read_sheet_cache(project_id, sched_cache)
     if fresh:
         _sheet_cache[project_id] = fresh
     elif project_id in _sheet_cache:
-        # JSON sidecar missing (edge case) — at least patch timestamp so it's not wrong
         if now_str:
             _sheet_cache[project_id]["last_modified"] = now_str
 
@@ -250,7 +261,7 @@ def master_projects():
 @login_required
 def get_monitor_sheet():
     """Return the raw sheet data for the department monitoring file."""
-    from excel_db import get_monitor_sheet_data, PROJECTS_DIR
+    from excel_db import get_monitor_sheet_data, PROJECTS_DIR, load_user_overdue_status
     import os
     
     user = get_current_user()
@@ -279,24 +290,23 @@ def get_monitor_sheet():
         print(f"[Monitor] File not found: {fpath}")
         return jsonify({"error": f"No monitoring file found for {department}"}), 404
     
-    # ALWAYS read fresh from JSON cache - don't use in-memory cache
     try:
         data = get_monitor_sheet_data(fpath, department)
-        # Get overdue map from session
-        overdue_map = session.get("overdue_map", {})
         
-        # Return both sheet data and overdue data
+        # ALWAYS refresh overdue_map when monitor loads
+        fresh_overdue_map = load_user_overdue_status(user)
+        session["overdue_map"] = fresh_overdue_map
+        
         return jsonify({
             "sheet": data,
-            "overdue": overdue_map
+            "overdue": fresh_overdue_map
         })
-        
     except Exception as e:
         print(f"[Monitor] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
+        
 @app.route("/api/projects/<project_id>/monitor-timestamp", methods=["POST"])
 @login_required
 def save_monitor_timestamp(project_id):
@@ -465,6 +475,39 @@ def remove_user(username):
         return jsonify({"error": msg}), 404
     return jsonify({"message": msg})
 
+@app.route("/api/refresh-file-status", methods=["POST"])
+def refresh_file_status():
+    from excel_db import get_all_monitor_projects, PROJECTS_DIR
+    import os
+    
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    role = user.get("role", "sw_tl")
+    projects = get_all_monitor_projects(role)
+    
+    print("=== REFRESH DEBUG ===")
+    
+    for project in projects:
+        project_id = project.get("project_id")
+        if project_id:
+            normalized_id = "SWESch_" + project_id.replace("/", "_")
+            excel_path_xlsx = os.path.join(PROJECTS_DIR, normalized_id + ".xlsx")
+            excel_path_xlsb = os.path.join(PROJECTS_DIR, normalized_id + ".xlsb")
+            file_exists = os.path.exists(excel_path_xlsx) or os.path.exists(excel_path_xlsb)
+            
+            # DEBUG: Print what we're checking
+            print(f"Project ID: {project_id}")
+            print(f"  Normalized: {normalized_id}")
+            print(f"  Looking for: {excel_path_xlsx}")
+            print(f"  Exists: {file_exists}")
+            print(f"  Actual files in dir: {os.listdir(PROJECTS_DIR)[:10]}")  # Show first 10 files
+            
+            project["file_exists"] = file_exists
+    
+    return jsonify({"projects": projects})
+    
 @app.route("/api/monitor/cell", methods=["POST"])
 @login_required
 def update_monitor_cell():
