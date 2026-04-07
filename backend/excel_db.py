@@ -6,7 +6,6 @@ import queue
 from openpyxl.utils import get_column_letter as gcl
 import pycel
 from pycel.excelcompiler import ExcelCompiler
-from sysmemory_compute import compute_sysmemory_json, queue_sysmemory_compute
 from openpyxl.styles.numbers import is_date_format
 
 try:
@@ -1590,28 +1589,6 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
 
         # Write JSON sidecar cache for fast future loads
     _write_sheet_cache(project_id, result, sched_cache)
-    
-    # Generate system memory JSON when sheet cache is first created
-    if not cached:  # This means we just created a new cache
-        try:
-            from sysmemory_compute import compute_sysmemory_json
-            
-            # Get the sheet data we just wrote
-            sheet_data = _read_sheet_cache(project_id, sched_cache)
-            if sheet_data:
-                # Determine the system memory cache directory
-                # sched_cache is like: data/SW/cache/schedules
-                # We want: data/SW/cache/system_memory
-                sysmemory_cache = os.path.join(os.path.dirname(sched_cache), "system_memory") if sched_cache else None
-                if not sysmemory_cache:
-                    # Fallback: derive from PROJECTS_DIR
-                    base_dir = os.path.dirname(PROJECTS_DIR)
-                    sysmemory_cache = os.path.join(base_dir, "cache", "system_memory")
-                
-                generate_sysmemory_json(fpath, project_id, sched_cache)
-                print(f"[Auto] System memory JSON created for {project_id}")
-        except Exception as e:
-            print(f"[Auto] Failed to create system memory JSON for {project_id}: {e}")
     
     return result
 

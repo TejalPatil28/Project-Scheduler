@@ -409,7 +409,7 @@ def clear_monitor_cache():
     return jsonify({"message": "Monitor cache cleared successfully"})
 
 # ── User management (admin only) ──────────────────────────────
-VALID_ROLES = ["admin", "head", "pm", "hw_tl", "sw_tl", "mfg_tl"]
+VALID_ROLES = ["admin", "sw_head", "hw_head", "mfg_head", "pm_head", "pm", "hw_tl", "sw_tl", "mfg_tl"]
 
 @app.route("/api/users", methods=["GET"])
 @login_required
