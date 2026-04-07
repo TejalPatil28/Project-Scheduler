@@ -1,25 +1,59 @@
 # Project Scheduler
 
-A web app to view and update project schedule Excel files.
+A web-based project scheduling system that manages Excel-based project schedules across multiple departments (SW, HW, MFG, PM). Supports role-based access, real-time editing, and department-specific monitoring.
+
+## Features
+
+- **Multi-department support**: SW, HW, MFG, PM departments with separate schedule files and monitors
+- **Role-based access**: Department heads, team leads, project managers, and admins
+- **Real-time editing**: Editable cells with pending changes and background saving
+- **JSON caching**: Fast loading with sidecar JSON files
+- **Excel synchronization**: Background threads write to Excel without blocking UI
+- **System memory flags**: Automatic calculation of PL/PM red activities, alert dates, and progress flags
+- **Dark/Light theme**: User preference saved locally
 
 ## Folder Structure
 
 ```
-tool/
+project/
 ├── backend/
-│   ├── app.py              ← Flask server
-│   ├── excel_db.py         ← Excel read/write layer
-│   ├── users.xlsx          ← User credentials
-│   └── requirements.txt
+│ ├── app.py ← Flask server (routes, auth)
+│ ├── excel_db.py ← Excel read/write/cache layer
+│ ├── users.xlsx ← User credentials database
+│ └── requirements.txt ← Python dependencies
 ├── frontend/
-│   ├── index.html
-│   ├── style.css
-│   ├── api.js
-│   └── app.js
-└── data/
-    └── projects/
-            OR-001.xlsx     ← Your project schedule files go here
-            OR-002.xlsx
+│ ├── index.html ← Main HTML entry
+│ ├── style.css ← Global styles + themes
+│ ├── api.js ← API wrapper
+│ ├── app.js ← Main application logic
+│ ├── monitor.js ← Monitor page (tabbed view)
+│ └── users.js ← User management page
+├── data/
+│ ├── SW/ ← Software department
+│ │ ├── SWESch/ ← SW schedule files
+│ │ ├── SW_Monitor.xlsx ← SW project tracking
+│ │ ├── PRS/ ← Project requirement sheets
+│ │ ├── Template/ ← SW template file
+│ │ └── cache/ ← JSON caches (auto-generated)
+│ ├── HW/ ← Hardware department
+│ │ ├── HWESch/ ← HW schedule files
+│ │ ├── HW_Monitor.xlsx
+│ │ ├── PRS/
+│ │ ├── Template/
+│ │ └── cache/
+│ ├── MFG/ ← Manufacturing department
+│ │ ├── MFGESch/
+│ │ ├── MFG_Monitor.xlsx
+│ │ ├── PRS/
+│ │ ├── Template/
+│ │ └── cache/
+│ └── PM/ ← Project Management department
+│ ├── PMESch/
+│ ├── PM_Monitor.xlsx
+│ ├── PRS/
+│ ├── Template/
+│ └── cache/
+└── README.md
 ```
 
 ## Setup
@@ -29,6 +63,16 @@ tool/
 cd backend
 pip install -r requirements.txt
 ```
+
+Dependencies include:
+
+openpyxl - Excel file handling
+pycel - Excel formula evaluation
+bcrypt - Password hashing
+flask - Web server
+flask-cors - CORS support
+pyxlsb - Excel binary format support
+
 
 ### 2. Add your project Excel files
 Copy your project schedule `.xlsx` files into `data/projects/`
