@@ -13,7 +13,6 @@ from excel_db import (
     create_user,
     update_user,
     delete_user,
-    update_index_entry,
     get_master_projects,
     get_discipline_dirs,
     OWNER_MAP,
@@ -203,7 +202,7 @@ def save_tasks(project_id):
 @login_required
 def get_sheet_data(project_id):
     """Return raw cell data for the Excel-mirror UI. Cached in memory."""
-    from excel_db import get_raw_sheet, PROJECTS_DIR
+    from excel_db import get_raw_sheet, get_discipline_dirs
     user = get_current_user()
     role = user["role"]
     is_readonly = role in ("admin", "head")
@@ -219,9 +218,12 @@ def get_sheet_data(project_id):
                 cell.pop("editable", None)
         return jsonify(data)
 
-    fpath = os.path.join(PROJECTS_DIR, project_id + ".xlsx")
+    # Get the correct projects directory for this user's role
+    projects_dir, _, _, _ = get_discipline_dirs(role)
+    
+    fpath = os.path.join(projects_dir, project_id + ".xlsx")
     if not os.path.exists(fpath):
-        fpath_b = os.path.join(PROJECTS_DIR, project_id + ".xlsb")
+        fpath_b = os.path.join(projects_dir, project_id + ".xlsb")
         if os.path.exists(fpath_b):
             fpath = fpath_b
         else:
@@ -246,7 +248,6 @@ def get_sheet_data(project_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/api/master/projects", methods=["GET"])
 @login_required
 def master_projects():
@@ -261,7 +262,7 @@ def master_projects():
 @login_required
 def get_monitor_sheet():
     """Return the raw sheet data for the department monitoring file."""
-    from excel_db import get_monitor_sheet_data, PROJECTS_DIR, load_user_overdue_status
+    from excel_db import get_monitor_sheet_data, find_monitor_file, load_user_overdue_status
     import os
     
     user = get_current_user()
@@ -279,10 +280,8 @@ def get_monitor_sheet():
     
     department = role_to_dept.get(role, "SW")
     
-    # Construct path to department monitoring file
-    monitor_filename = f"{department}_Monitor.xlsx"
-    dept_dir = os.path.dirname(PROJECTS_DIR)
-    fpath = os.path.join(dept_dir, monitor_filename)
+    # Use find_monitor_file instead
+    fpath = find_monitor_file(department)
     
     print(f"[Monitor] Looking for: {fpath}")
     
@@ -395,7 +394,8 @@ def clear_monitor_cache():
     # Delete monitor cache for all departments
     departments = ["SW", "HW", "MFG", "PM"]
     for dept in departments:
-        monitor_cache_dir = os.path.join(DATA_DIR, dept, "cache", "monitoring")
+        from excel_db import get_cache_path
+        monitor_cache_dir = get_cache_path(dept, "Monitoring")
         if os.path.exists(monitor_cache_dir):
             for filename in os.listdir(monitor_cache_dir):
                 if filename.endswith(".json"):
@@ -477,7 +477,7 @@ def remove_user(username):
 
 @app.route("/api/refresh-file-status", methods=["POST"])
 def refresh_file_status():
-    from excel_db import get_all_monitor_projects, PROJECTS_DIR
+    from excel_db import get_all_monitor_projects, find_schedule_folder, DEPT_CONFIG
     import os
     
     user = get_current_user()
@@ -487,27 +487,34 @@ def refresh_file_status():
     role = user.get("role", "sw_tl")
     projects = get_all_monitor_projects(role)
     
+    # Map role to department
+    role_to_dept = {"sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG", "pm": "PM", "admin": "SW", "head": "SW"}
+    dept = role_to_dept.get(role, "SW")
+    projects_dir = find_schedule_folder(dept)
+    
+    # Get the correct prefix for this department
+    prefix = DEPT_CONFIG[dept]["sched_prefix"]
+    
     print("=== REFRESH DEBUG ===")
     
     for project in projects:
         project_id = project.get("project_id")
         if project_id:
-            normalized_id = "SWESch_" + project_id.replace("/", "_")
-            excel_path_xlsx = os.path.join(PROJECTS_DIR, normalized_id + ".xlsx")
-            excel_path_xlsb = os.path.join(PROJECTS_DIR, normalized_id + ".xlsb")
+            # Use department-specific prefix instead of hardcoded "SWESch_"
+            normalized_id = prefix + "_" + project_id.replace("/", "_")
+            excel_path_xlsx = os.path.join(projects_dir, normalized_id + ".xlsx")
+            excel_path_xlsb = os.path.join(projects_dir, normalized_id + ".xlsb")
             file_exists = os.path.exists(excel_path_xlsx) or os.path.exists(excel_path_xlsb)
             
-            # DEBUG: Print what we're checking
             print(f"Project ID: {project_id}")
             print(f"  Normalized: {normalized_id}")
             print(f"  Looking for: {excel_path_xlsx}")
             print(f"  Exists: {file_exists}")
-            print(f"  Actual files in dir: {os.listdir(PROJECTS_DIR)[:10]}")  # Show first 10 files
             
             project["file_exists"] = file_exists
     
     return jsonify({"projects": projects})
-    
+           
 @app.route("/api/monitor/cell", methods=["POST"])
 @login_required
 def update_monitor_cell():

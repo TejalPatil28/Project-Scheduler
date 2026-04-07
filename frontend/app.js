@@ -601,7 +601,7 @@ function filterMasterList(searchTerm) {
   var user     = state.user || {};
   var role     = user.role || "";
   var initials = (user.short_name || "").trim().toUpperCase();
-  var isHead   = (role === "head" || role === "admin");
+  var isHead = (role === "head" || role === "admin" || role.endsWith("_head"));
 
   // Apply role filtering (same logic as monitor screen)
   var roleFiltered;
@@ -1034,7 +1034,7 @@ function renderProjectPage() {
         '</div>',
       '</div>',
     '</div>',
-    '<div class="save-bar" id="save-bar"' + (state.user && (state.user.role === "admin" || state.user.role === "head") ? ' style="display:none"' : '') + '>',
+    '<div class="save-bar" id="save-bar"' + (state.user && (state.user.role === "admin" || state.user.role === "head" || (state.user.role && state.user.role.endsWith("_head"))) ? ' style="display:none"' : '') + '>',
       '<div class="save-bar-left">',
         '<div class="save-count" id="change-count">0</div>',
         '<div class="save-msg">unsaved changes</div>',
@@ -1832,7 +1832,7 @@ function renderExcelMirror(container, data) {
           "white-space:nowrap",
         ];
         // ── EDITABILITY — computed once, used by both bg and input rendering ──
-        var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head");
+        var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head" || (state.user.role && state.user.role.endsWith("_head")));
         var isADColumn = (col3 === "AD" && r >= 9);
         var isEditable = false;
         if (isADColumn) {

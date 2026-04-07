@@ -50,31 +50,63 @@ USERS_PATH      = os.path.join(BASE_DIR, "users.xlsx")
 DATA_DIR        = os.path.join(BASE_DIR, "..", "data")
 
 # ── Role to discipline folder mapping ─────────────────────────
-ROLE_DISCIPLINE = {
-    "sw_tl":  "SW",
-    "hw_tl":  "HW",
-    "mfg_tl": "MFG",
-    "pm":     "PM",
-    "admin":  "SW",   # admin defaults to SW
-    "head":   "SW",   # head defaults to SW
+ROLE_TO_DEPT = {
+    "sw_tl":    "SW",
+    "hw_tl":    "HW",
+    "mfg_tl":   "MFG",
+    "pm":       "PM",
+    "admin":    "SW",      
+    "sw_head":  "SW",
+    "hw_head":  "HW",
+    "mfg_head": "MFG",
+    "pm_head":  "PM",
 }
 
-def get_discipline_dirs(role):
-    """Return (projects_dir, monitoring_dir, schedules_cache, monitoring_cache)
-    for the given role."""
-    disc = ROLE_DISCIPLINE.get(role, "SW")
-    disc_dir       = os.path.join(DATA_DIR, disc)
-    projects_dir   = os.path.join(disc_dir, disc + "ESch")       # e.g. SW/SWESch
-    monitoring_dir = disc_dir                                      # monitoring files at root of discipline
-    cache_dir      = os.path.join(disc_dir, "cache")
-    sched_cache    = os.path.join(cache_dir, "schedules")
-    mon_cache      = os.path.join(cache_dir, "monitoring")
-    os.makedirs(sched_cache, exist_ok=True)
-    os.makedirs(mon_cache,   exist_ok=True)
-    return projects_dir, monitoring_dir, sched_cache, mon_cache
+# ── Department configuration ───────────────────────────────────
+DEPT_CONFIG = {
+    "SW":  {"sched_prefix": "SWESch",  "monitor_prefix": "SW_Monitor",  "sched_folder": "SWESch"},
+    "HW":  {"sched_prefix": "HWESch",  "monitor_prefix": "HW_Monitor",  "sched_folder": "HWESch"},
+    "MFG": {"sched_prefix": "MFGSch",  "monitor_prefix": "MFG_Monitor", "sched_folder": "MFGSch"},
+    "PM":  {"sched_prefix": "PrjSch",  "monitor_prefix": "PL_Monitor",  "sched_folder": "PrjSch"},
+}
 
-# ── Default dirs (SW) for functions that don't have user context ──
-PROJECTS_DIR, MONITORING_DIR, SWESCH_CACHE, MON_CACHE = get_discipline_dirs("sw_tl")
+def find_monitor_file(dept):
+    """Scan data/ for first file starting with department's monitor prefix."""
+    prefix = DEPT_CONFIG[dept]["monitor_prefix"]
+    if not os.path.exists(DATA_DIR):
+        return None
+    for f in os.listdir(DATA_DIR):
+        if f.startswith(prefix) and f.endswith((".xlsx", ".xlsb")):
+            return os.path.join(DATA_DIR, f)
+    return None
+
+def find_schedule_folder(dept):
+    """Return path to schedule folder for department."""
+    folder_name = DEPT_CONFIG[dept]["sched_folder"]
+    path = os.path.join(DATA_DIR, folder_name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def get_cache_path(dept, cache_type):
+    """
+    Return cache folder path.
+    cache_type = 'Schedules' | 'Monitoring' | 'SystemMemory'
+    """
+    path = os.path.join(DATA_DIR, "cache", cache_type, dept)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def get_discipline_dirs(role):
+    """
+    Return (projects_dir, monitor_dir, sched_cache, mon_cache) for role.
+    monitor_dir is DATA_DIR (where monitor files live).
+    """
+    dept = ROLE_TO_DEPT.get(role, "SW")
+    projects_dir = find_schedule_folder(dept)
+    monitor_dir = DATA_DIR
+    sched_cache = get_cache_path(dept, "Schedules")
+    mon_cache = get_cache_path(dept, "Monitoring")
+    return projects_dir, monitor_dir, sched_cache, mon_cache
 
 # ── Column mapping for project Excel header ────────────────────
 # Label in col C/F, data in col D/G
@@ -175,11 +207,13 @@ def _cell(ws, ref):
 
 import json
 
-INDEX_PATH = os.path.join(DATA_DIR, "index.json")
 
 # ── Task JSON sidecar cache ────────────────────────────────────
 def _sheet_cache_path(project_id, sched_cache=None):
-    return os.path.join(sched_cache or SWESCH_CACHE, project_id + "_sheet.json")
+    if sched_cache is None:
+        # Fallback - get default cache path for SW
+        _, _, sched_cache, _ = get_discipline_dirs("sw_tl")
+    return os.path.join(sched_cache, project_id + "_sheet.json")
 
 def _write_sheet_cache(project_id, data, sched_cache=None):
     """Write sheet data to JSON sidecar file."""
@@ -306,8 +340,10 @@ def _invalidate_sheet_cache(project_id, sched_cache=None):
         print(f"Sheet cache invalidation failed for {project_id}: {e}")
 
 def _monitoring_cache_path(short_name, mon_cache=None):
-    """Path to monitoring JSON cache for a user."""
-    return os.path.join(mon_cache or MON_CACHE, f"Monitor_{short_name}.json")
+    if mon_cache is None:
+        # Fallback - get default monitoring cache path for SW
+        _, _, _, mon_cache = get_discipline_dirs("sw_tl")
+    return os.path.join(mon_cache, f"Monitor_{short_name}.json")
 
 def _write_monitoring_cache(short_name, data, mon_cache=None):
     try:
@@ -326,51 +362,6 @@ def _read_monitoring_cache(short_name, mon_cache=None):
     except Exception:
         return None
 
-def build_index():
-    """Scan all Excel files and write index.json."""
-    projects = []
-    for fname in list_project_files():
-        fpath = os.path.join(PROJECTS_DIR, fname)
-        project_id = os.path.splitext(fname)[0]
-        try:
-            p = read_project_header(fpath)
-            projects.append(p)
-            print(f"  Indexed: {fname}")
-        except Exception as e:
-            print(f"  Skipped {fname}: {e}")
-    with open(INDEX_PATH, "w") as f:
-        json.dump(projects, f, indent=2)
-    print(f"Index built: {len(projects)} projects")
-    return projects
-
-def read_index():
-    """Read index.json. Returns list of project summaries."""
-    if not os.path.exists(INDEX_PATH):
-        return build_index()
-    with open(INDEX_PATH, "r") as f:
-        return json.load(f)
-
-def update_index_entry(project_id):
-    """Re-read one project Excel and update its entry in index.json."""
-    fname = project_id + ".xlsx"
-    fpath = os.path.join(PROJECTS_DIR, fname)
-    if not os.path.exists(fpath):
-        return
-    try:
-        updated = read_project_header(fpath)
-        projects = read_index()
-        found = False
-        for i, p in enumerate(projects):
-            if p["id"] == project_id:
-                projects[i] = updated
-                found = True
-                break
-        if not found:
-            projects.append(updated)
-        with open(INDEX_PATH, "w") as f:
-            json.dump(projects, f, indent=2)
-    except Exception as e:
-        print(f"Index update failed for {project_id}: {e}")
 
 # ── Users ──────────────────────────────────────────────────────
 def get_all_users():
@@ -405,11 +396,14 @@ def get_user_by_short_name(short_name):
     return None
 
 # ── Projects ───────────────────────────────────────────────────
-def list_project_files():
+def list_project_files(projects_dir=None):
     """Return list of .xlsx filenames in projects dir."""
-    if not os.path.exists(PROJECTS_DIR):
+    if projects_dir is None:
+        # Fallback for calls without context
+        projects_dir = find_schedule_folder("SW")
+    if not os.path.exists(projects_dir):
         return []
-    return [f for f in os.listdir(PROJECTS_DIR)
+    return [f for f in os.listdir(projects_dir)
             if f.endswith(".xlsx") or f.endswith(".xlsb")]
 
 def read_project_header(filepath):
@@ -545,7 +539,7 @@ def get_projects_for_user(user):
 
     print(f"[get_projects_for_user] role: {role}, short_name: {short_name}")
 
-    if role in ("admin", "head"):
+    if role in ("admin", "head", "sw_head", "hw_head", "mfg_head", "pm_head"):
         # Admin/Head: get all projects from department monitoring file
         print("[get_projects_for_user] Using get_all_monitor_projects")
         master_list = get_all_monitor_projects(role)
@@ -742,10 +736,11 @@ def get_tasks(project_id, owner_filter=None, role="sw_tl"):
     return tasks
 
 
-def update_task(project_id, task_code, percent_complete, remark):
+def update_task(project_id, task_code, percent_complete, remark, role="sw_tl"):
     """Update % complete and remark for a specific task in the Excel file."""
+    projects_dir, _, _, _ = get_discipline_dirs(role)
     fname = project_id + ".xlsx"
-    fpath = os.path.join(PROJECTS_DIR, fname)
+    fpath = os.path.join(projects_dir, fname)
     if not os.path.exists(fpath):
         return False, "Project file not found"
 
@@ -895,7 +890,7 @@ def get_all_monitor_projects(role="sw_tl"):
     department = role_to_dept.get(role, "SW")
     
     # FIRST: Try to read from JSON cache
-    monitor_cache_path = os.path.join(DATA_DIR, department, "cache", "monitoring", f"{department}_Monitor.json")
+    monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
     
     if os.path.exists(monitor_cache_path):
         try:
@@ -924,17 +919,16 @@ def get_all_monitor_projects(role="sw_tl"):
                     stale = False
                     if timestamp_str:
                         try:
-                            # Parse timestamp like "29-03-2026 20:04:00"
                             last_edited = datetime.strptime(timestamp_str, "%d-%m-%Y %H:%M:%S").date()
                             stale = (today - last_edited).days > 2
-                            print(f"[Monitor] Project {project_id}: last_edited={last_edited}, stale={stale}")
                         except Exception as e:
                             print(f"[Monitor] Could not parse timestamp for {project_id}: {timestamp_str}, error={e}")
-                    
+
                     # Normalize project ID for file lookup
-                    normalized_id = "SWESch_" + project_id.replace("/", "_")
-                    file_exists = (os.path.exists(os.path.join(PROJECTS_DIR, normalized_id + ".xlsx")) or
-                                   os.path.exists(os.path.join(PROJECTS_DIR, normalized_id + ".xlsb")))
+                    normalized_id = DEPT_CONFIG[department]["sched_prefix"] + "_" + project_id.replace("/", "_")
+                    sched_folder = find_schedule_folder(department)
+                    file_exists = (os.path.exists(os.path.join(sched_folder, normalized_id + ".xlsx")) or
+                                os.path.exists(os.path.join(sched_folder, normalized_id + ".xlsb")))
                     
                     # Get SW Head (col C) and SWE Name (col D)
                     swh_head = cells.get(f"C{row_num}", {}).get('v', '')
@@ -956,7 +950,10 @@ def get_all_monitor_projects(role="sw_tl"):
             print(f"[Monitor] Error reading from JSON cache: {e}, falling back to Excel")
     
     # FALLBACK: Read from Excel if JSON cache doesn't exist
-    monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
+    monitor_path = find_monitor_file(department)
+    if not monitor_path:
+        print(f"[Monitor] No monitor file found for {department}")
+        return []
     print(f"[Monitor] Reading from Excel: {monitor_path}")
     
     if not os.path.exists(monitor_path):
@@ -969,7 +966,7 @@ def get_all_monitor_projects(role="sw_tl"):
     else:
         return _read_master_xlsx(monitor_path)
 
-def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None):
+def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None, projects_dir=None,dept="SW"):
     """Convert raw col-F / col-BA values into a result dict."""
     if not pid:
         return None
@@ -1009,9 +1006,11 @@ def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None)
             stale = False
 
     # Normalize: FSL/2122/CHN/OR004_PLC → SWESch_FSL_2122_CHN_OR004_PLC
-    normalized_id = "SWESch_" + pid.replace("/", "_")
-    file_exists = (os.path.exists(os.path.join(PROJECTS_DIR, normalized_id + ".xlsx")) or
-                   os.path.exists(os.path.join(PROJECTS_DIR, normalized_id + ".xlsb")))
+    prefix = DEPT_CONFIG[dept]["sched_prefix"]
+    normalized_id = prefix + "_" + pid.replace("/", "_")
+    folder = projects_dir if projects_dir else find_schedule_folder("SW")
+    file_exists = (os.path.exists(os.path.join(folder, normalized_id + ".xlsx")) or
+                   os.path.exists(os.path.join(folder, normalized_id + ".xlsb")))
 
     return {
         "project_id":    pid,            # display value e.g. FSL/2122/CHN/OR004_PLC
@@ -1023,14 +1022,25 @@ def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None)
     }
 
 
-def _read_master_xlsb(path):
-    """Read master file in .xlsb format using pyxlsb."""
+def _read_master_xlsb(path, role="sw_tl"):
+    # Determine department from path
+    if "SW_Monitor" in path:
+        department = "SW"
+    elif "HW_Monitor" in path:
+        department = "HW"
+    elif "MFG_Monitor" in path:
+        department = "MFG"
+    elif "PL_Monitor" in path:
+        department = "PM"
+    else:
+        department = "SW"
     try:
         from pyxlsb import open_workbook
     except ImportError:
         print("pyxlsb not installed — cannot read .xlsb master file")
         return []
 
+    projects_dir, _, _, _ = get_discipline_dirs(role)
     results = []
     try:
         with open_workbook(path) as wb:
@@ -1041,22 +1051,30 @@ def _read_master_xlsb(path):
             with wb.get_sheet("SWMon") as ws:
                 for i, row in enumerate(ws.rows()):
                     if i == 0:
-                        continue  # skip header
-                    # col C = index 2, col D = index 3, col F = index 5, col BA = index 52
+                        continue
                     f_val    = row[5].v  if len(row) > 5  else None
                     ba_val   = row[52].v if len(row) > 52 else None
                     swh_head = row[2].v  if len(row) > 2  else None
                     swe_name = row[3].v  if len(row) > 3  else None
-                    entry = _master_row_to_entry(f_val, ba_val, swh_head=swh_head, swe_name=swe_name)
+                    entry = _master_row_to_entry(f_val, ba_val, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir, dept=department)
                     if entry:
                         results.append(entry)
     except Exception as e:
         print(f"Master .xlsb read error for {path}: {e}")
     return results
 
-
-def _read_master_xlsx(path):
-    """Read master file in .xlsx format using openpyxl."""
+def _read_master_xlsx(path, role="sw_tl"):
+    # Determine department from path
+    if "SW_Monitor" in path:
+        department = "SW"
+    elif "HW_Monitor" in path:
+        department = "HW"
+    elif "MFG_Monitor" in path:
+        department = "MFG"
+    elif "PL_Monitor" in path:
+        department = "PM"
+    else:
+        department = "SW"
     try:
         wb = openpyxl.load_workbook(path, data_only=True)
         if "SWMon" not in wb.sheetnames:
@@ -1066,6 +1084,7 @@ def _read_master_xlsx(path):
         print(f"Master .xlsx read error for {path}: {e}")
         return []
 
+    projects_dir, _, _, _ = get_discipline_dirs(role)
     results = []
     for row in ws.iter_rows(min_row=2, values_only=False):
         c_cell  = row[2]  if len(row) > 2  else None
@@ -1076,7 +1095,6 @@ def _read_master_xlsx(path):
         ba_val   = ba_cell.value if ba_cell else None
         swh_head = c_cell.value if c_cell else None
         swe_name = d_cell.value if d_cell else None
-        # Try to get fill colour for fallback staleness check
         ba_rgb = None
         if ba_cell:
             try:
@@ -1085,17 +1103,10 @@ def _read_master_xlsx(path):
                     ba_rgb = fg.rgb
             except Exception:
                 pass
-        entry = _master_row_to_entry(pid, ba_val, ba_rgb, swh_head=swh_head, swe_name=swe_name)
+        entry = _master_row_to_entry(pid, ba_val, ba_rgb, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir)
         if entry:
             results.append(entry)
     return results
-
-
-_THEME_COLORS = {
-    0: "#FFFFFF", 1: "#000000", 2: "#EEECE1", 3: "#DDD9C3",
-    4: "#C4BD97", 5: "#938953", 6: "#494429", 7: "#1F1A0E",
-    8: "#C6D9F0", 9: "#8DB3E2",
-}
 
 def _resolve_color(color_obj):
     if color_obj is None:
@@ -1606,11 +1617,21 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
         # Define cache path
     # filepath is: .../data/SW/SW_Monitor.xlsx
     # We want: .../data/SW/cache/monitoring/SW_Monitor.json
-    base_dir = os.path.dirname(filepath)  # .../data/SW
-    cache_dir = os.path.join(base_dir, "cache", "monitoring")
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_path = os.path.join(cache_dir, f"{monitor_type}_Monitor.json")
-    
+    # Determine department from filepath
+    if "SW_Monitor" in filepath:
+        dept = "SW"
+    elif "HW_Monitor" in filepath:
+        dept = "HW"
+    elif "MFG_Monitor" in filepath:
+        dept = "MFG"
+    elif "PL_Monitor" in filepath:
+        dept = "PM"
+    else:
+        dept = "SW"
+
+    cache_dir = get_cache_path(dept, "Monitoring")
+    cache_path = os.path.join(cache_dir, f"{dept}_Monitor.json")
+   
     # Return cache if exists
     if os.path.exists(cache_path):
         try:
@@ -1629,13 +1650,15 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
     ws = wb.active
     max_col = ws.max_column
 
-    # Find the true last data row by scanning only column F (col index 6).
-    # ws.max_row is unreliable — Excel stores formatting extents that can
-    # stretch thousands of rows past real data, bloating the JSON massively.
-    # Scan column F from row 12 (first real data row) to find last project.
-    # Row 10 = headers, row 11 = ignored placeholder (_), row 12+ = data.
-    # Stop as soon as we hit "_" or empty — that marks end of data.
-    max_row = ws.max_row
+    # Find the true last row with data by scanning column F (project ID column)
+    # Start from row 12 (first data row) and go down until we find empty
+    max_row = 12  # Start from first data row
+    for row in range(12, ws.max_row + 1):
+        cell_value = ws[f"F{row}"].value
+        # If cell is empty or None or just "_" (placeholder), stop
+        if cell_value is None or str(cell_value).strip() == "" or str(cell_value).strip() == "_":
+            break
+        max_row = row
 
     # Get all columns (A, B, C, ... up to max_col)
     cols = [gcl(i) for i in range(1, max_col + 1)]
@@ -1694,24 +1717,23 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
     
-    # Determine discipline
-    parts = filepath.split(os.sep)
-    data_index = None
-    for i, part in enumerate(parts):
-        if part == 'data':
-            data_index = i
-            break
-    
-    if data_index is not None and data_index + 1 < len(parts):
-        discipline = parts[data_index + 1]
-        base_path = os.sep.join(parts[:data_index + 1])
-        sysmemory_cache = os.path.join(base_path, discipline, "cache", "system_memory")
+    # Determine discipline from filepath
+    if "SWESch" in filepath:
+        discipline = "SW"
+    elif "HWESch" in filepath:
+        discipline = "HW"
+    elif "MFGSch" in filepath:
+        discipline = "MFG"
+    elif "PrjSch" in filepath:
+        discipline = "PM"
     else:
-        sysmemory_cache = os.path.join(DATA_DIR, "SW", "cache", "system_memory")
-    
+        discipline = "SW"
+
+    # Use central cache
+    sysmemory_cache = os.path.join(DATA_DIR, "cache", "SystemMemory", discipline)
     os.makedirs(sysmemory_cache, exist_ok=True)
     sysmemory_path = os.path.join(sysmemory_cache, f"{project_id}_sysmemory.json")
-    
+
     # Load workbook with data_only=False to keep formulas for CY-DJ
     wb = load_workbook(filepath, data_only=False)
     ws = wb.active
@@ -1800,7 +1822,6 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
         else:
             task_name = ""
         
-        print(f"Row {row}: Column I raw value = '{task_name}'")
         
         # Store task name if not empty
         if task_name:
@@ -1834,7 +1855,6 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
         
         # Stop if no task name
         if not task_name:
-            print(f"Stopping at row {row} - no task name")
             break
     
     wb.close()
@@ -1927,7 +1947,7 @@ def _read_sysmemory_from_excel(project_id, fpath, role):
         return
 
     # Determine which sheet to evaluate against
-    discipline = ROLE_DISCIPLINE.get(role, "SW")
+    discipline = ROLE_TO_DEPT.get(role, "SW")
     if discipline == "SW":
         sheet_name = "PrjSch"
     else:
@@ -2015,10 +2035,8 @@ def _read_sysmemory_from_excel(project_id, fpath, role):
         row_data = {col: _evaluate(col, row) for col in TASK_COLS}
         rows[str(row)] = row_data
 
-    # Persist to JSON cache
-    sysmemory_cache = os.path.join(
-        DATA_DIR, discipline, "cache", "system_memory"
-    )
+        # Persist to JSON cache
+    sysmemory_cache = os.path.join(DATA_DIR, "cache", "SystemMemory", discipline)
     os.makedirs(sysmemory_cache, exist_ok=True)
     sysmemory_path = os.path.join(sysmemory_cache, f"{project_id}_sysmemory.json")
 
@@ -2042,8 +2060,7 @@ def update_monitor_cell(department, coord, value, role="sw_tl"):
     import os
     from datetime import datetime
     
-    monitor_cache_dir = os.path.join(DATA_DIR, department, "cache", "monitoring")
-    monitor_cache_path = os.path.join(monitor_cache_dir, f"{department}_Monitor.json")
+    monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
     
     if not os.path.exists(monitor_cache_path):
         print(f"[Monitor] Cache not found: {monitor_cache_path}")
@@ -2070,7 +2087,6 @@ def update_monitor_cell(department, coord, value, role="sw_tl"):
             json.dump(monitor_data, f, indent=2)
         
         # Queue Excel write
-        from excel_db import queue_monitor_excel_write
         updates = {coord: value}
         queue_monitor_excel_write(department, updates)
         
@@ -2105,9 +2121,9 @@ def read_sysmemory_json(project_id, role="sw_tl"):
     PM_RED_COL = "CY"
     ALERT_DT_COL = "DH"
     PROGRESS_FLAG_COL = "DD"
-    
+       
     # Path to sysmemory JSON
-    sysmemory_path = os.path.join(DATA_DIR, department, "cache", "system_memory", f"{project_id}_sysmemory.json")
+    sysmemory_path = os.path.join(DATA_DIR, "cache", "SystemMemory", department, f"{project_id}_sysmemory.json")
     
     if not os.path.exists(sysmemory_path):
         print(f"[Sysmemory] File not found: {sysmemory_path}")
@@ -2161,10 +2177,10 @@ def read_sysmemory_json(project_id, role="sw_tl"):
                 "ProgressFlag": progress_flag
             }
             
-            if pl_red == 1 or pm_red == 1 or alert_dt == 1 or progress_flag > 0:
-                print(f"[Sysmemory] Task '{task_name}' - PLRed: {pl_red}, PMRed: {pm_red}, AlertDt: {alert_dt}, ProgressFlag: {progress_flag}")
+            #if pl_red == 1 or pm_red == 1 or alert_dt == 1 or progress_flag > 0:
+                #print(f"[Sysmemory] Task '{task_name}' - PLRed: {pl_red}, PMRed: {pm_red}, AlertDt: {alert_dt}, ProgressFlag: {progress_flag}")
         
-        print(f"[Sysmemory] Loaded {len(task_map)} tasks for {project_id}")
+        #print(f"[Sysmemory] Loaded {len(task_map)} tasks for {project_id}")
         return task_map
         
     except Exception as e:
@@ -2181,11 +2197,11 @@ def load_user_overdue_status(user):
     from datetime import datetime
     import os
     
-    print(f"[Overdue] Loading overdue status for user: {user.get('username')}")
+    #print(f"[Overdue] Loading overdue status for user: {user.get('username')}")
     
     # Get projects for this user
     projects = get_projects_for_user(user)
-    print(f"[Overdue] Found {len(projects)} projects for user")
+    #print(f"[Overdue] Found {len(projects)} projects for user")
     
     overdue_map = {}
     role = user.get("role", "sw_tl")
@@ -2202,14 +2218,14 @@ def load_user_overdue_status(user):
     
     for project in projects:
         project_id = project.get("file_id") or project.get("id")
-        print(f"[DEBUG] project_id key: '{project_id}'")  # <-- ADD THIS LINE
+        #print(f"[DEBUG] project_id key: '{project_id}'")  # <-- ADD THIS LINE
         if not project_id:
             continue
         
-        print(f"[Overdue] Processing project: {project_id}")
+        #print(f"[Overdue] Processing project: {project_id}")
         
         # Path to sysmemory JSON
-        sysmemory_path = os.path.join(DATA_DIR, department, "cache", "system_memory", f"{project_id}_sysmemory.json")
+        sysmemory_path = os.path.join(DATA_DIR, "cache", "SystemMemory", department, f"{project_id}_sysmemory.json")
         
         # If sysmemory JSON doesn't exist, generate it
         if not os.path.exists(sysmemory_path):
@@ -2231,11 +2247,11 @@ def load_user_overdue_status(user):
         
         if task_map:
             overdue_map[project_id] = task_map
-            print(f"[Overdue] Loaded {len(task_map)} tasks for {project_id}")
+            #print(f"[Overdue] Loaded {len(task_map)} tasks for {project_id}")
         else:
             print(f"[Overdue] No tasks loaded for {project_id}")
     
-    print(f"[Overdue] Total projects loaded: {len(overdue_map)}")
+    #print(f"[Overdue] Total projects loaded: {len(overdue_map)}")
     return overdue_map
 
 def _fix_int_dates(ws):
@@ -2370,8 +2386,11 @@ def _do_monitor_excel_write(department, updates):
     from openpyxl.utils.datetime import from_excel as _from_excel
     from datetime import datetime as _dt
     
-    monitor_path = os.path.join(DATA_DIR, department, f"{department}_Monitor.xlsx")
-    
+    monitor_path = find_monitor_file(department)
+    if not monitor_path:
+        print(f"[Monitor] No monitor file found for {department}")
+        return []
+        
     if not os.path.exists(monitor_path):
         print(f"[Monitor Background] File not found: {monitor_path}")
         return
@@ -2481,8 +2500,7 @@ def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
     }
     
     department = role_to_dept.get(role, "SW")
-    monitor_cache_dir = os.path.join(DATA_DIR, department, "cache", "monitoring")
-    monitor_cache_path = os.path.join(monitor_cache_dir, f"{department}_Monitor.json")
+    monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
     
     if not os.path.exists(monitor_cache_path):
         print(f"[Monitor] Cache not found: {monitor_cache_path}")
@@ -2549,8 +2567,7 @@ def update_monitor_task_percentages(project_id, role="sw_tl"):
     }
     
     department = role_to_dept.get(role, "SW")
-    monitor_cache_dir = os.path.join(DATA_DIR, department, "cache", "monitoring")
-    monitor_cache_path = os.path.join(monitor_cache_dir, f"{department}_Monitor.json")
+    monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
     
     if not os.path.exists(monitor_cache_path):
         print(f"[Monitor] Cache not found: {monitor_cache_path}")

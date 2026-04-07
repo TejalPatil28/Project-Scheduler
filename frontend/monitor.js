@@ -203,7 +203,7 @@
   function extractRows(cells, maxRow, user) {
     var role     = user && user.role;
     var initials = user && user.short_name ? user.short_name.trim().toUpperCase() : "";
-    var isHead   = (role === "head" || role === "admin");
+    var isHead = (role === "head" || role === "admin" || role.endsWith("_head"));
 
     var rows = [];
     for (var r = DATA_START; r <= maxRow; r++) {
@@ -539,7 +539,7 @@ function calculateColumnSums(cells, rows, cols) {
           if (isMonitorTab) {
             
             // ── COLUMN C: SW Head (editable by HEAD only) ──
-            if (col === "C" && userRole === "head") {
+            if (col === "C" && userRole === "sw_head") {
               var tlValues = collectMonitorTLValues(cells, allRows);
               var ocC = "window.__monitorSaveCellEvt('" + col + "'," + r + ",this.value)";
               cellContent = '<select style="' + inputBase + ';cursor:pointer;" onchange="' + ocC + '" onclick="event.stopPropagation()">';
@@ -685,7 +685,7 @@ function calculateColumnSums(cells, rows, cols) {
                 // Text color — independent of bg
                 if (userRole === "sw_tl" && taskStatus.PLRedActivity === 1) {
                     textColor = "#ff4444";
-                } else if (userRole === "head" && taskStatus.PMRedActivity === 1) {
+                } else if (userRole === "sw_head" && taskStatus.PMRedActivity === 1) {
                     textColor = "#ff4444";
                 } else if (taskStatus.AlertDtYellow === 1) {
                     textColor = "#ffcc00";
