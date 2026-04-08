@@ -820,3 +820,25 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--text1);font-s
 .mgrp-btn-label {
   font-size: 11px;
 }
+
+/* PROJECT BUILDER FORM DATA */
+.form-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 16px 0 12px 0;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--accent);
+  color: var(--text1);
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.form-row .form-group {
+  flex: 1;
+  min-width: 150px;
+}

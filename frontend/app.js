@@ -413,7 +413,8 @@ async function refreshMonitorData() {
         var result = await API.req("GET", "/monitor/sheet?t=" + Date.now());
         if (result && !result.error) {
             monitorGrid.innerHTML = "";
-            renderMonitor(monitorGrid, result.sheet, state.user, result.overdue || {});
+            var monitorCfg = getMonitorConfig(state.user.role);
+            renderMonitor(monitorGrid, result.sheet, state.user, result.overdue || {}, monitorCfg);
         }
     } catch(err) {
         console.error("Failed to refresh monitor:", err);
@@ -451,7 +452,8 @@ async function switchToMonitor() {
         page.innerHTML = "";
         page.appendChild(wrap);
         // Pass sheet data and overdue data separately
-        renderMonitor(wrap, result.sheet, state.user, result.overdue || {});
+        var monitorCfg = getMonitorConfig(state.user.role);
+        renderMonitor(wrap, result.sheet, state.user, result.overdue || {}, monitorCfg);
     } catch(err) {
         page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
     }
@@ -528,20 +530,60 @@ function renderMasterList(masterList, projects) {
   var el = document.getElementById("master-list");
   if (!el) return;
 
-  if (!masterList.length) {
-    el.innerHTML = '<div class="master-empty">No master file found</div>';
+  // Store master list globally for filtering
+  window._masterListFull = masterList || [];
+  window._projectsFull = projects || [];
+
+  // Check if user is PM (Project Manager) or pm_head
+  var user = state.user || {};
+  var canCreateProject = (user.role === "pm" || user.role === "pm_head");
+  
+  var createButtonHtml = canCreateProject ? 
+    '<div style="padding: 8px 10px; border-bottom: 1px solid var(--border);">' +
+      '<button id="create-new-project-btn" class="btn btn-primary btn-sm" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">' +
+        '<span>+</span> New Project' +
+      '</button>' +
+    '</div>' : '';
+
+  // Build search input HTML (NO REFRESH BUTTON HERE - it's already in sidebar header)
+  var searchHtml = [
+    '<div class="master-search-wrap" style="padding: 8px 10px; border-bottom: 1px solid var(--border);">',
+      '<input type="text" id="master-search-input" class="form-input" style="font-size:12px; padding:6px 8px; width: 100%;" placeholder="Search project ID..." autocomplete="off">',
+    '</div>'
+  ].join("");
+
+  // If no projects found
+  if (!masterList || masterList.length === 0) {
+    el.innerHTML = [
+      searchHtml,
+      createButtonHtml,
+      '<div class="master-empty" style="padding: 20px; text-align: center; color: var(--text3);">No projects found</div>',
+      '<div id="master-list-items" class="master-pane-list"></div>'
+    ].join("");
+    
+    // Bind search input event
+    var searchInput = document.getElementById("master-search-input");
+    if (searchInput) {
+      searchInput.addEventListener("input", function(e) {
+        filterMasterList(e.target.value);
+      });
+    }
+    
+    // Bind create new project button event
+    var createBtn = document.getElementById("create-new-project-btn");
+    if (createBtn) {
+      createBtn.addEventListener("click", function() {
+        showNewProjectModal();
+      });
+    }
+    
     return;
   }
 
-  // Store master list globally for filtering
-  window._masterListFull = masterList;
-  window._projectsFull = projects;
-
-  // Build search input + list container
+  // If projects exist, show full list with button
   var html = [
-    '<div class="master-search-wrap" style="padding: 8px 10px; border-bottom: 1px solid var(--border);">',
-      '<input type="text" id="master-search-input" class="form-input" style="font-size:12px; padding:6px 8px;" placeholder="Search project ID..." autocomplete="off">',
-    '</div>',
+    searchHtml,
+    createButtonHtml,
     '<div id="master-list-items" class="master-pane-list"></div>'
   ].join("");
 
@@ -554,15 +596,318 @@ function renderMasterList(masterList, projects) {
       filterMasterList(e.target.value);
     });
   }
-  // Bind refresh button event
-  var refreshBtn = document.getElementById("refresh-file-status-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", function() {
-      refreshFileStatusOnOpen();
+  
+  // Bind create new project button event
+  var createBtn = document.getElementById("create-new-project-btn");
+  if (createBtn) {
+    createBtn.addEventListener("click", function() {
+      showNewProjectModal();
     });
   }
-  // Initial render
+
+  // Render the actual project items
   filterMasterList("");
+}
+
+function showNewProjectModal() {
+  var existing = document.getElementById("new-project-modal-overlay");
+  if (existing) existing.remove();
+  
+  var modal = document.createElement("div");
+  modal.id = "new-project-modal-overlay";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+      <div class="modal-header">
+        <div class="modal-title">Create New Project</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeNewProjectModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="np-err" class="alert alert-error hidden"></div>
+        
+        <!-- Header Section -->
+        <div class="form-section-title">Project Header</div>
+        <div class="form-row">
+          <div class="form-group"><label>OR No.</label><input class="form-input" id="np_or_number" placeholder="OR No."></div>
+          <div class="form-group"><label>Master OR</label><input class="form-input" id="np_master_or" placeholder="Master OR"></div>
+          <div class="form-group"><label>Client PO#</label><input class="form-input" id="np_client_po" placeholder="Client PO#"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Quote Number</label><input class="form-input" id="np_quote_number" placeholder="Quote Number"></div>
+          <div class="form-group"><label>Sales Engineer</label><input class="form-input" id="np_sales_engineer" placeholder="Sales Engineer"></div>
+          <div class="form-group"><label>Sales Manager</label><input class="form-input" id="np_sales_manager" placeholder="Sales Manager"></div>
+        </div>
+        
+        <!-- Project Details -->
+        <div class="form-section-title">Project Details</div>
+        <div class="form-row">
+          <div class="form-group"><label>PO Value (in lacs)</label><input class="form-input" id="np_po_value" type="number" step="0.01" placeholder="0.00"></div>
+          <div class="form-group"><label>Customer Name</label><input class="form-input" id="np_customer_name" placeholder="Customer Name"></div>
+          <div class="form-group"><label>End Customer</label><input class="form-input" id="np_end_customer" placeholder="End Customer"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Consultant</label><input class="form-input" id="np_consultant" placeholder="Consultant"></div>
+          <div class="form-group"><label>Project Description</label><input class="form-input" id="np_project_desc" placeholder="Project Description"></div>
+          <div class="form-group"><label>Section</label><input class="form-input" id="np_section" placeholder="Section"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Mfg Location</label>
+            <select class="form-input" id="np_mfg_loc">
+              <option value="GON">GON</option>
+              <option value="DUB">DUB</option>
+            </select>
+          </div>
+        </div>
+        
+        <!-- Efforts -->
+        <div class="form-section-title">Efforts</div>
+        <div class="form-row">
+          <div class="form-group"><label>HW Efforts</label><input class="form-input" id="np_hw_efforts" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Std Panels</label><input class="form-input" id="np_std_panels" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Act Panels</label><input class="form-input" id="np_act_panels" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>SW Efforts</label><input class="form-input" id="np_sw_efforts" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Mfg Efforts</label><input class="form-input" id="np_mfg_efforts" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        
+        <!-- Actual Efforts -->
+        <div class="form-section-title">Actual Efforts</div>
+        <div class="form-row">
+          <div class="form-group"><label>Actual HW Efforts</label><input class="form-input" id="np_actual_hw_efforts" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Actual SW Efforts</label><input class="form-input" id="np_actual_sw_efforts" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Actual Mfg Efforts</label><input class="form-input" id="np_actual_mfg_efforts" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        
+        <!-- Dates -->
+        <div class="form-section-title">Dates</div>
+        <div class="form-row">
+          <div class="form-group"><label>PO Date</label><input class="form-input" id="np_po_date" type="date"></div>
+          <div class="form-group"><label>OPF Recpt</label><input class="form-input" id="np_opf_recpt" type="date"></div>
+          <div class="form-group"><label>HW Input</label><input class="form-input" id="np_hw_input" type="date"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Dwg. Sub.</label><input class="form-input" id="np_dwg_sub" type="date"></div>
+          <div class="form-group"><label>Dwg Appr</label><input class="form-input" id="np_dwg_appr" type="date"></div>
+          <div class="form-group"><label>HW FAT</label><input class="form-input" id="np_hw_fat" type="date"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Dispatch</label><input class="form-input" id="np_dispatch" type="date"></div>
+          <div class="form-group"><label>SW Input</label><input class="form-input" id="np_sw_input" type="date"></div>
+          <div class="form-group"><label>SW FAT</label><input class="form-input" id="np_sw_fat" type="date"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Install</label><input class="form-input" id="np_install" type="date"></div>
+          <div class="form-group"><label>PreComm.</label><input class="form-input" id="np_precomm" type="date"></div>
+          <div class="form-group"><label>Comm.</label><input class="form-input" id="np_comm" type="date"></div>
+        </div>
+        
+        <!-- Stakeholders -->
+        <div class="form-section-title">Stakeholders</div>
+        <div class="form-row">
+          <div class="form-group"><label>Sales</label><input class="form-input" id="np_sh_sales" placeholder="Sales"></div>
+          <div class="form-group"><label>HW</label><input class="form-input" id="np_sh_hw" placeholder="HW"></div>
+          <div class="form-group"><label>SW</label><input class="form-input" id="np_sh_sw" placeholder="SW"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>BYR</label><input class="form-input" id="np_sh_byr" placeholder="BYR"></div>
+          <div class="form-group"><label>MFG</label><input class="form-input" id="np_sh_mfg" placeholder="MFG"></div>
+          <div class="form-group"><label>E&C</label><input class="form-input" id="np_sh_ec" placeholder="E&C"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>A/C</label><input class="form-input" id="np_sh_ac" placeholder="A/C"></div>
+        </div>
+        
+        <!-- Scope Selection (YES/NO) -->
+        <div class="form-section-title">Scope (Departments Involved)</div>
+        <div class="form-row">
+          <div class="form-group"><label>HW Scope</label>
+            <select class="form-input" id="np_scope_hw"><option value="NO">NO</option><option value="YES">YES</option></select>
+          </div>
+          <div class="form-group"><label>SW Scope</label>
+            <select class="form-input" id="np_scope_sw"><option value="NO">NO</option><option value="YES">YES</option></select>
+          </div>
+          <div class="form-group"><label>MFG Scope</label>
+            <select class="form-input" id="np_scope_mfg"><option value="NO">NO</option><option value="YES">YES</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>INST Scope</label>
+            <select class="form-input" id="np_scope_inst"><option value="NO">NO</option><option value="YES">YES</option></select>
+          </div>
+          <div class="form-group"><label>COM Scope</label>
+            <select class="form-input" id="np_scope_com"><option value="NO">NO</option><option value="YES">YES</option></select>
+          </div>
+        </div>
+        
+        <!-- LD Fields -->
+        <div class="form-section-title">LD Details</div>
+        <div class="form-row">
+          <div class="form-group"><label>LD Date</label><input class="form-input" id="np_ld_date" type="date"></div>
+          <div class="form-group"><label>LD max/wk %</label><input class="form-input" id="np_ld_maxwk" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>LD max of OV %</label><input class="form-input" id="np_ld_maxov" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>LD Remarks</label><input class="form-input" id="np_ld_remarks" placeholder="LD Remarks"></div>
+        </div>
+        
+        <!-- Warranty -->
+        <div class="form-section-title">Warranty</div>
+        <div class="form-row">
+          <div class="form-group"><label>Warranty</label><input class="form-input" id="np_warranty" placeholder="Warranty terms"></div>
+        </div>
+        
+        <!-- Actuals -->
+        <div class="form-section-title">Actuals</div>
+        <div class="form-row">
+          <div class="form-group"><label>Balance Panels</label><input class="form-input" id="np_balance_panels" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Panel Disp Act</label><input class="form-input" id="np_panel_disp_act" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Est. VA%</label><input class="form-input" id="np_est_va_pct" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Est. VA</label><input class="form-input" id="np_est_va" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Est. SM%</label><input class="form-input" id="np_est_sm_pct" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Est. SM</label><input class="form-input" id="np_est_sm" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Act. VA%</label><input class="form-input" id="np_act_va_pct" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Act. VA</label><input class="form-input" id="np_act_va" type="number" step="0.01" placeholder="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Act. SM%</label><input class="form-input" id="np_act_sm_pct" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Act. SM</label><input class="form-input" id="np_act_sm" type="number" step="0.01" placeholder="0"></div>
+          <div class="form-group"><label>Remark</label><input class="form-input" id="np_reason_remark" placeholder="Remark"></div>
+        </div>
+        
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
+        <button class="btn btn-primary" id="np-create-btn">Create Project</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Bind create button event
+  document.getElementById("np-create-btn").onclick = function() {
+    createNewProject();
+  };
+}
+
+function closeNewProjectModal() {
+  var modal = document.getElementById("new-project-modal-overlay");
+  if (modal) modal.remove();
+}
+
+function closeNewProjectModal() {
+  var modal = document.getElementById("new-project-modal-overlay");
+  if (modal) modal.remove();
+}
+
+async function createNewProject() {
+  var btn = document.getElementById("np-create-btn");
+  var errEl = document.getElementById("np-err");
+  
+  // Collect all form data
+  var formData = {
+    // Header
+    or_number: document.getElementById("np_or_number").value,
+    master_or: document.getElementById("np_master_or").value,
+    client_po: document.getElementById("np_client_po").value,
+    quote_number: document.getElementById("np_quote_number").value,
+    sales_engineer: document.getElementById("np_sales_engineer").value,
+    sales_manager: document.getElementById("np_sales_manager").value,
+    
+    // Project Details
+    po_value: document.getElementById("np_po_value").value,
+    customer_name: document.getElementById("np_customer_name").value,
+    end_customer: document.getElementById("np_end_customer").value,
+    consultant: document.getElementById("np_consultant").value,
+    project_desc: document.getElementById("np_project_desc").value,
+    section: document.getElementById("np_section").value,
+    mfg_loc: document.getElementById("np_mfg_loc").value,
+    
+    // Efforts
+    hw_efforts: document.getElementById("np_hw_efforts").value,
+    std_panels: document.getElementById("np_std_panels").value,
+    act_panels: document.getElementById("np_act_panels").value,
+    sw_efforts: document.getElementById("np_sw_efforts").value,
+    mfg_efforts: document.getElementById("np_mfg_efforts").value,
+    
+    // Actual Efforts
+    actual_hw_efforts: document.getElementById("np_actual_hw_efforts").value,
+    actual_sw_efforts: document.getElementById("np_actual_sw_efforts").value,
+    actual_mfg_efforts: document.getElementById("np_actual_mfg_efforts").value,
+    
+    // Dates
+    po_date: document.getElementById("np_po_date").value,
+    opf_recpt: document.getElementById("np_opf_recpt").value,
+    hw_input: document.getElementById("np_hw_input").value,
+    dwg_sub: document.getElementById("np_dwg_sub").value,
+    dwg_appr: document.getElementById("np_dwg_appr").value,
+    hw_fat: document.getElementById("np_hw_fat").value,
+    dispatch: document.getElementById("np_dispatch").value,
+    sw_input: document.getElementById("np_sw_input").value,
+    sw_fat: document.getElementById("np_sw_fat").value,
+    install: document.getElementById("np_install").value,
+    precomm: document.getElementById("np_precomm").value,
+    comm: document.getElementById("np_comm").value,
+    
+    // Stakeholders
+    sh_sales: document.getElementById("np_sh_sales").value,
+    sh_hw: document.getElementById("np_sh_hw").value,
+    sh_sw: document.getElementById("np_sh_sw").value,
+    sh_byr: document.getElementById("np_sh_byr").value,
+    sh_mfg: document.getElementById("np_sh_mfg").value,
+    sh_ec: document.getElementById("np_sh_ec").value,
+    sh_ac: document.getElementById("np_sh_ac").value,
+    
+    // Scope
+    scope_hw: document.getElementById("np_scope_hw").value,
+    scope_sw: document.getElementById("np_scope_sw").value,
+    scope_mfg: document.getElementById("np_scope_mfg").value,
+    scope_inst: document.getElementById("np_scope_inst").value,
+    scope_com: document.getElementById("np_scope_com").value,
+    
+    // LD
+    ld_date: document.getElementById("np_ld_date").value,
+    ld_maxwk: document.getElementById("np_ld_maxwk").value,
+    ld_maxov: document.getElementById("np_ld_maxov").value,
+    ld_remarks: document.getElementById("np_ld_remarks").value,
+    
+    // Warranty
+    warranty: document.getElementById("np_warranty").value,
+    
+    // Actuals
+    balance_panels: document.getElementById("np_balance_panels").value,
+    panel_disp_act: document.getElementById("np_panel_disp_act").value,
+    est_va_pct: document.getElementById("np_est_va_pct").value,
+    est_va: document.getElementById("np_est_va").value,
+    est_sm_pct: document.getElementById("np_est_sm_pct").value,
+    est_sm: document.getElementById("np_est_sm").value,
+    act_va_pct: document.getElementById("np_act_va_pct").value,
+    act_va: document.getElementById("np_act_va").value,
+    act_sm_pct: document.getElementById("np_act_sm_pct").value,
+    act_sm: document.getElementById("np_act_sm").value,
+    reason_remark: document.getElementById("np_reason_remark").value,
+  };
+  
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Creating...';
+  errEl.classList.add("hidden");
+  
+  try {
+    var result = await API.req("POST", "/projects/create", formData);
+    closeNewProjectModal();
+    toast("Project created successfully!");
+    refreshMasterList();
+  } catch(err) {
+    errEl.textContent = err.message || "Creation failed";
+    errEl.classList.remove("hidden");
+    btn.disabled = false;
+    btn.innerHTML = "Create Project";
+  }
 }
 
 async function refreshMasterList() {
@@ -598,17 +943,16 @@ function filterMasterList(searchTerm) {
   var container = document.getElementById("master-list-items");
   if (!container) return;
 
-  var user     = state.user || {};
-  var role     = user.role || "";
+  var user = state.user || {};
+  var role = user.role || "";
   var initials = (user.short_name || "").trim().toUpperCase();
-  var isHead = (role === "head" || role === "admin" || role.endsWith("_head"));
+  var isHead = (role === "head" || role === "admin" || (role && role.endsWith("_head")));
 
-  // Apply role filtering (same logic as monitor screen)
+  // Apply role filtering
   var roleFiltered;
   if (isHead) {
     roleFiltered = masterList;
   } else {
-    // Check SWH Head (swh_head) first, fallback to SWE Name (swe_name)
     var swhRows = masterList.filter(function(m) {
       return (m.swh_head || "").trim().toUpperCase() === initials;
     });
@@ -626,6 +970,11 @@ function filterMasterList(searchTerm) {
     var fileId = m.file_id || "";
     return term === "" || pid.toLowerCase().includes(term) || fileId.toLowerCase().includes(term);
   });
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="master-empty" style="padding: 20px; text-align: center; color: var(--text3);">No matching projects</div>';
+    return;
+  }
 
   renderMasterItems(filtered, projects, container);
 }
