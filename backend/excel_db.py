@@ -7,6 +7,7 @@ from openpyxl.utils import get_column_letter as gcl
 import pycel
 from pycel.excelcompiler import ExcelCompiler
 from openpyxl.styles.numbers import is_date_format
+from openpyxl.utils import column_index_from_string as col2idx
 
 try:
     from pycel.excelcompiler import ExcelCompiler
@@ -64,11 +65,59 @@ ROLE_TO_DEPT = {
 
 # ── Department configuration ───────────────────────────────────
 DEPT_CONFIG = {
-    "SW":  {"sched_prefix": "SWESch",  "monitor_prefix": "SW_Monitor",  "sched_folder": "SWESch"},
-    "HW":  {"sched_prefix": "HWESch",  "monitor_prefix": "HW_Monitor",  "sched_folder": "HWESch"},
-    "MFG": {"sched_prefix": "MFGSch",  "monitor_prefix": "MFG_Monitor", "sched_folder": "MFGSch"},
-    "PM":  {"sched_prefix": "PrjSch",  "monitor_prefix": "PL_Monitor",  "sched_folder": "PrjSch"},
+    "SW": {
+        "sched_prefix":   "SWESch",
+        "monitor_prefix": "SW_Monitor",
+        "sched_folder":   "SWESch",
+        "monitor_sheet":  "SWMon",
+        "project_id_col": "F",
+        "file_col":       "B",
+        "head_col":       "C",
+        "tl_col":         "D",
+        "timestamp_col":  "BA",
+        "data_start_row": 12,
+    },
+    "HW": {
+        "sched_prefix":   "HWESch",
+        "monitor_prefix": "HW_Monitor",
+        "sched_folder":   "HWESch",
+        "monitor_sheet":  "HWMon",
+        "project_id_col": "F",
+        "head_col":       "C",
+        "tl_col":         "D",
+        "timestamp_col":  "BA",
+        "data_start_row": 12,
+    },
+    "MFG": {
+        "sched_prefix":   "MFGSch",
+        "monitor_prefix": "MFG_Monitor",
+        "sched_folder":   "MFGSch",
+        "monitor_sheet":  "MFGMon",
+        "project_id_col": "F",
+        "head_col":       "C",
+        "tl_col":         "D",
+        "timestamp_col":  "BA",
+        "data_start_row": 12,
+    },
+    "PM": {
+        "sched_prefix":   "PrjSch",
+        "monitor_prefix": "PL_Monitor",
+        "sched_folder":   "PrjSch",
+        "monitor_sheet":  "PLMon",
+        "project_id_col": "B",
+        "head_col":       "C",
+        "tl_col":         "D",
+        "timestamp_col":  "BA",
+        "data_start_row": 12,
+    },
 }
+
+def detect_dept_from_path(filepath):
+    """Detect department by matching monitor_prefix against filepath."""
+    for dept, cfg in DEPT_CONFIG.items():
+        if cfg["monitor_prefix"] in filepath:
+            return dept
+    return "SW"  # safe fallback
 
 def find_monitor_file(dept):
     """Scan data/ for first file starting with department's monitor prefix."""
@@ -876,50 +925,33 @@ def get_all_monitor_projects(role="sw_tl"):
     from datetime import date, datetime
     import json
     import os
-    
-    # Map role to department
-    role_to_dept = {
-    "sw_tl": "SW",
-    "hw_tl": "HW", 
-    "mfg_tl": "MFG",
-    "pm": "PM",
-    "admin": "SW",
-    "head": "SW",
-    "sw_head": "SW",
-    "hw_head": "HW",
-    "mfg_head": "MFG",
-    "pm_head": "PM"
-    }
-    
-    department = role_to_dept.get(role, "SW")
-    
-    # FIRST: Try to read from JSON cache
+
+    department = ROLE_TO_DEPT.get(role, "SW")
+    cfg = DEPT_CONFIG[department]
+    pid_col = cfg["project_id_col"]
+
     monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
-    
+
     if os.path.exists(monitor_cache_path):
         try:
             with open(monitor_cache_path, 'r') as f:
                 monitor_data = json.load(f)
-            
+
             cells = monitor_data.get('cells', {})
             results = []
             today = date.today()
-            
-            # Find all rows with project IDs (column I)
+
             for coord, cell_info in cells.items():
-                if coord.startswith('F') and cell_info.get('v'):
-                    row_num = int(coord[1:])
+                if coord.startswith(pid_col) and cell_info.get('v'):
+                    row_num = int(coord[len(pid_col):])
                     project_id = str(cell_info.get('v')).strip()
-                    
-                    # Only process FSL projects
+
                     if not project_id.startswith("FSL"):
                         continue
-                    
-                    # Get timestamp from column BA
-                    ba_coord = f"BA{row_num}"
-                    timestamp_str = cells.get(ba_coord, {}).get('v')
-                    
-                    # Calculate stale: more than 2 days old
+
+                    ts_col = cfg["timestamp_col"]
+                    timestamp_str = cells.get(f"{ts_col}{row_num}", {}).get('v')
+
                     stale = False
                     if timestamp_str:
                         try:
@@ -928,16 +960,16 @@ def get_all_monitor_projects(role="sw_tl"):
                         except Exception as e:
                             print(f"[Monitor] Could not parse timestamp for {project_id}: {timestamp_str}, error={e}")
 
-                    # Normalize project ID for file lookup
-                    normalized_id = DEPT_CONFIG[department]["sched_prefix"] + "_" + project_id.replace("/", "_")
+                    normalized_id = cfg["sched_prefix"] + "_" + project_id.replace("/", "_")
                     sched_folder = find_schedule_folder(department)
                     file_exists = (os.path.exists(os.path.join(sched_folder, normalized_id + ".xlsx")) or
-                                os.path.exists(os.path.join(sched_folder, normalized_id + ".xlsb")))
-                    
-                    # Get SW Head (col C) and SWE Name (col D)
-                    swh_head = cells.get(f"C{row_num}", {}).get('v', '')
-                    swe_name = cells.get(f"D{row_num}", {}).get('v', '')
-                    
+                                   os.path.exists(os.path.join(sched_folder, normalized_id + ".xlsb")))
+
+                    head_col = cfg["head_col"]
+                    tl_col = cfg["tl_col"]
+                    swh_head = cells.get(f"{head_col}{row_num}", {}).get('v', '')
+                    swe_name = cells.get(f"{tl_col}{row_num}", {}).get('v', '')
+
                     results.append({
                         "project_id": project_id,
                         "file_id": normalized_id,
@@ -946,29 +978,22 @@ def get_all_monitor_projects(role="sw_tl"):
                         "swh_head": (swh_head or "").strip().upper(),
                         "swe_name": (swe_name or "").strip().upper(),
                     })
-            
+
             print(f"[Monitor] Loaded {len(results)} projects from JSON cache")
             return results
-            
+
         except Exception as e:
             print(f"[Monitor] Error reading from JSON cache: {e}, falling back to Excel")
-    
-    # FALLBACK: Read from Excel if JSON cache doesn't exist
+
     monitor_path = find_monitor_file(department)
     if not monitor_path:
         print(f"[Monitor] No monitor file found for {department}")
         return []
-    print(f"[Monitor] Reading from Excel: {monitor_path}")
-    
-    if not os.path.exists(monitor_path):
-        print(f"[Monitor] File not found: {monitor_path}")
-        return []
-    
-    # ... your existing Excel reading code here (the original _read_master_xlsx or _read_master_xlsb) ...
+
     if monitor_path.endswith(".xlsb"):
-        return _read_master_xlsb(monitor_path)
+        return _read_master_xlsb(monitor_path, department)
     else:
-        return _read_master_xlsx(monitor_path)
+        return _read_master_xlsx(monitor_path, department)
 
 def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None, projects_dir=None,dept="SW"):
     """Convert raw col-F / col-BA values into a result dict."""
@@ -1026,79 +1051,77 @@ def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None,
     }
 
 
-def _read_master_xlsb(path, role="sw_tl"):
-    # Determine department from path
-    if "SW_Monitor" in path:
-        department = "SW"
-    elif "HW_Monitor" in path:
-        department = "HW"
-    elif "MFG_Monitor" in path:
-        department = "MFG"
-    elif "PL_Monitor" in path:
-        department = "PM"
-    else:
-        department = "SW"
+def _read_master_xlsb(path, department=None):
+    if department is None:
+        department = detect_dept_from_path(path)
+    cfg = DEPT_CONFIG[department]
+    sheet_name = cfg["monitor_sheet"]
+    pid_col_idx = col2idx(cfg["project_id_col"]) - 1
+    head_idx = col2idx(cfg["head_col"]) - 1
+    tl_idx = col2idx(cfg["tl_col"]) - 1
+    ts_idx = col2idx(cfg["timestamp_col"]) - 1
+
     try:
         from pyxlsb import open_workbook
     except ImportError:
         print("pyxlsb not installed — cannot read .xlsb master file")
         return []
 
-    projects_dir, _, _, _ = get_discipline_dirs(role)
+    projects_dir = find_schedule_folder(department)
     results = []
     try:
         with open_workbook(path) as wb:
-            sheet_names = wb.sheets
-            if "SWMon" not in sheet_names:
-                print(f"SWMon sheet not found in {path}. Sheets: {sheet_names}")
+            if sheet_name not in wb.sheets:
+                print(f"[Monitor] Sheet '{sheet_name}' not found. Available: {wb.sheets}")
                 return []
-            with wb.get_sheet("SWMon") as ws:
+            with wb.get_sheet(sheet_name) as ws:
                 for i, row in enumerate(ws.rows()):
-                    if i == 0:
+                    if i < cfg["data_start_row"] - 1:
                         continue
-                    f_val    = row[5].v  if len(row) > 5  else None
-                    ba_val   = row[52].v if len(row) > 52 else None
-                    swh_head = row[2].v  if len(row) > 2  else None
-                    swe_name = row[3].v  if len(row) > 3  else None
-                    entry = _master_row_to_entry(f_val, ba_val, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir, dept=department)
+                    pid = row[pid_col_idx].v if len(row) > pid_col_idx else None
+                    ba_val = row[ts_idx].v if len(row) > ts_idx else None
+                    swh_head = row[head_idx].v if len(row) > head_idx else None
+                    swe_name = row[tl_idx].v if len(row) > tl_idx else None
+                    entry = _master_row_to_entry(pid, ba_val, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir, dept=department)
                     if entry:
                         results.append(entry)
     except Exception as e:
         print(f"Master .xlsb read error for {path}: {e}")
     return results
 
-def _read_master_xlsx(path, role="sw_tl"):
-    # Determine department from path
-    if "SW_Monitor" in path:
-        department = "SW"
-    elif "HW_Monitor" in path:
-        department = "HW"
-    elif "MFG_Monitor" in path:
-        department = "MFG"
-    elif "PL_Monitor" in path:
-        department = "PM"
-    else:
-        department = "SW"
+def _read_master_xlsx(path, department=None):
+    if department is None:
+        department = detect_dept_from_path(path)
+    cfg = DEPT_CONFIG[department]
+    sheet_name = cfg["monitor_sheet"]
+    pid_col_idx = col2idx(cfg["project_id_col"]) - 1
+    head_idx = col2idx(cfg["head_col"]) - 1
+    tl_idx = col2idx(cfg["tl_col"]) - 1
+    ts_idx = col2idx(cfg["timestamp_col"]) - 1
+
     try:
         wb = openpyxl.load_workbook(path, data_only=True)
-        if "SWMon" not in wb.sheetnames:
+        if sheet_name not in wb.sheetnames:
+            print(f"[Monitor] Sheet '{sheet_name}' not found in {path}. Available: {wb.sheetnames}")
             return []
-        ws = wb["SWMon"]
+        ws = wb[sheet_name]
     except Exception as e:
         print(f"Master .xlsx read error for {path}: {e}")
         return []
 
-    projects_dir, _, _, _ = get_discipline_dirs(role)
+    projects_dir = find_schedule_folder(department)
     results = []
-    for row in ws.iter_rows(min_row=2, values_only=False):
-        c_cell  = row[2]  if len(row) > 2  else None
-        f_cell  = row[5]  if len(row) > 5  else None
-        d_cell  = row[3]  if len(row) > 3  else None
-        ba_cell = row[52] if len(row) > 52 else None
-        pid      = f_cell.value if f_cell else None
-        ba_val   = ba_cell.value if ba_cell else None
+    for row in ws.iter_rows(min_row=cfg["data_start_row"], values_only=False):
+        pid_cell = row[pid_col_idx] if len(row) > pid_col_idx else None
+        ba_cell = row[ts_idx] if len(row) > ts_idx else None
+        c_cell = row[head_idx] if len(row) > head_idx else None
+        d_cell = row[tl_idx] if len(row) > tl_idx else None
+
+        pid = pid_cell.value if pid_cell else None
+        ba_val = ba_cell.value if ba_cell else None
         swh_head = c_cell.value if c_cell else None
         swe_name = d_cell.value if d_cell else None
+
         ba_rgb = None
         if ba_cell:
             try:
@@ -1107,6 +1130,7 @@ def _read_master_xlsx(path, role="sw_tl"):
                     ba_rgb = fg.rgb
             except Exception:
                 pass
+
         entry = _master_row_to_entry(pid, ba_val, ba_rgb, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir, dept=department)
         if entry:
             results.append(entry)
@@ -1608,82 +1632,59 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     return result
 
 def get_monitor_sheet_data(filepath, monitor_type="SW"):
-    """
-    Read monitoring file without PyCel, just basic cell values.
-    Creates JSON cache for fast subsequent loads.
-    """
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
     from datetime import datetime, date, time
     import json
     import os
-    
-        # Define cache path
-    # filepath is: .../data/SW/SW_Monitor.xlsx
-    # We want: .../data/SW/cache/monitoring/SW_Monitor.json
-    # Determine department from filepath
-    if "SW_Monitor" in filepath:
-        dept = "SW"
-    elif "HW_Monitor" in filepath:
-        dept = "HW"
-    elif "MFG_Monitor" in filepath:
-        dept = "MFG"
-    elif "PL_Monitor" in filepath:
-        dept = "PM"
-    else:
-        dept = "SW"
+
+    # Detect department from filepath using config
+    dept = detect_dept_from_path(filepath)
+    cfg = DEPT_CONFIG[dept]
 
     cache_dir = get_cache_path(dept, "Monitoring")
     cache_path = os.path.join(cache_dir, f"{dept}_Monitor.json")
-   
-    # Return cache if exists
+
     if os.path.exists(cache_path):
         try:
             with open(cache_path, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Error reading monitor cache: {e}")
-    
-    # Read Excel file
-        # Read Excel file using safe loader
+
     try:
         wb = safe_load_workbook(filepath, data_only=True)
     except Exception as e:
         print(f"Error loading monitor file {filepath}: {e}")
         return None
+
     ws = wb.active
     max_col = ws.max_column
+    pid_col = cfg["project_id_col"]
+    data_start = cfg["data_start_row"]
 
-    # Find the true last row with data by scanning column F (project ID column)
-    # Start from row 12 (first data row) and go down until we find empty
-    max_row = 12  # Start from first data row
-    for row in range(12, ws.max_row + 1):
-        cell_value = ws[f"F{row}"].value
-        # If cell is empty or None or just "_" (placeholder), stop
+    # Find true last row with data
+    max_row = data_start
+    for row in range(data_start, ws.max_row + 1):
+        cell_value = ws[f"{pid_col}{row}"].value
         if cell_value is None or str(cell_value).strip() == "" or str(cell_value).strip() == "_":
             break
         max_row = row
 
-    # Get all columns (A, B, C, ... up to max_col)
     cols = [gcl(i) for i in range(1, max_col + 1)]
 
-    # Read cells — skip None values to keep JSON small
     cells = {}
     for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
         for cell in row:
             v = cell.value
             if v is None:
-                continue  # skip empty cells — biggest source of bloat
-            # Handle datetime
+                continue
             if isinstance(v, datetime):
                 v = v.strftime("%d-%b-%y")
-            # Handle date (without time)
             elif isinstance(v, date):
                 v = v.strftime("%d-%b-%y")
-            # Handle time (without date)
             elif isinstance(v, time):
                 v = v.strftime("%H:%M")
-            # Keep other values as they are
             cells[cell.coordinate] = {"v": v}
 
     result = {
@@ -1701,14 +1702,13 @@ def get_monitor_sheet_data(filepath, monitor_type="SW"):
         "left_panel": {},
         "last_modified": None
     }
-    
-    # Write cache
+
     with open(cache_path, 'w') as f:
         json.dump(result, f)
-    
+
     wb.close()
-    return result
-    
+    return result   
+
 def generate_sysmemory_json(filepath, project_id, sched_cache=None):
     """
     Generate system memory JSON.
@@ -2535,64 +2535,48 @@ def queue_monitor_excel_write(department, updates):
 
 
 def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
-    """Update the BA column timestamp for a project in monitor JSON cache.
-    Returns dict of updates applied."""
     from datetime import datetime
     import json
     import os
-    
-    # Map role to department
-    role_to_dept = {
-        "sw_tl": "SW",
-        "hw_tl": "HW", 
-        "mfg_tl": "MFG",
-        "pm": "PM",
-        "admin": "SW",
-        "head": "SW"
-    }
-    
-    department = role_to_dept.get(role, "SW")
+
+    department = ROLE_TO_DEPT.get(role, "SW")
+    cfg = DEPT_CONFIG[department]
+    pid_col = cfg["file_col"]  # Use config instead of hardcoded 'B'
+
     monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
-    
+
     if not os.path.exists(monitor_cache_path):
         print(f"[Monitor] Cache not found: {monitor_cache_path}")
         return {}
-    
+
     try:
-        # Load monitor cache
         with open(monitor_cache_path, 'r') as f:
             monitor_data = json.load(f)
-        
+
         cells = monitor_data.get('cells', {})
-        
-        # Find the row with matching project ID in COLUMN F
+
         found_row = None
         for coord, cell_info in cells.items():
-            if coord.startswith('B') and cell_info.get('v') == project_id:
-                found_row = int(coord[1:])
+            if coord.startswith(pid_col) and cell_info.get('v') == project_id:
+                found_row = int(coord[len(pid_col):])
                 break
-        
+
         if found_row:
-            # Update column BA in cache
-            ba_coord = f"BA{found_row}"
+            ba_coord = f"{cfg['timestamp_col']}{found_row}"
             if ba_coord not in cells:
                 cells[ba_coord] = {}
-            
             cells[ba_coord]['v'] = timestamp
             cells[ba_coord]['updated'] = True
-            
-            # Write back to JSON cache
+
             with open(monitor_cache_path, 'w') as f:
                 json.dump(monitor_data, f, indent=2)
-            
+
             print(f"[Monitor] Updated cache for {project_id} at row {found_row}: {timestamp}")
-            
-            # Return updates dict
             return {ba_coord: timestamp}
         else:
-            print(f"[Monitor] Project {project_id} not found in monitor cache (searched column F)")
+            print(f"[Monitor] Project {project_id} not found in monitor cache (searched column {pid_col})")
             return {}
-            
+
     except Exception as e:
         print(f"[Monitor] Failed to update timestamp: {e}")
         return {}
