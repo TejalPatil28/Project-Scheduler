@@ -879,12 +879,16 @@ def get_all_monitor_projects(role="sw_tl"):
     
     # Map role to department
     role_to_dept = {
-        "sw_tl": "SW",
-        "hw_tl": "HW", 
-        "mfg_tl": "MFG",
-        "pm": "PM",
-        "admin": "SW",
-        "head": "SW"
+    "sw_tl": "SW",
+    "hw_tl": "HW", 
+    "mfg_tl": "MFG",
+    "pm": "PM",
+    "admin": "SW",
+    "head": "SW",
+    "sw_head": "SW",
+    "hw_head": "HW",
+    "mfg_head": "MFG",
+    "pm_head": "PM"
     }
     
     department = role_to_dept.get(role, "SW")
@@ -1103,7 +1107,7 @@ def _read_master_xlsx(path, role="sw_tl"):
                     ba_rgb = fg.rgb
             except Exception:
                 pass
-        entry = _master_row_to_entry(pid, ba_val, ba_rgb, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir)
+        entry = _master_row_to_entry(pid, ba_val, ba_rgb, swh_head=swh_head, swe_name=swe_name, projects_dir=projects_dir, dept=department)
         if entry:
             results.append(entry)
     return results
@@ -2254,15 +2258,73 @@ def load_user_overdue_status(user):
     #print(f"[Overdue] Total projects loaded: {len(overdue_map)}")
     return overdue_map
 
-def _fix_int_dates(ws):
+def _parse_date_value(val):
     """
-    Scan every cell in ws and fix any int/float sitting in a date-formatted cell.
-    openpyxl crashes on wb.save() with 'int has no attribute year' when such cells
-    exist. Must be called on every workbook before saving.
+    Convert any date-like value (int serial, float serial, or date string) to a
+    Python datetime.  Returns None if conversion fails.
+    Used by _fix_int_dates and _do_excel_write to keep date cells clean.
     """
-    from openpyxl.styles.numbers import is_date_format as _idf
     from openpyxl.utils.datetime import from_excel as _fxl
     from datetime import datetime as _dt, timedelta
+
+    _DATE_FMTS = (
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+        "%d-%m-%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d %b %Y, %I:%M %p",
+    )
+
+    if val is None:
+        return None
+    if isinstance(val, (_dt,)):
+        return val
+    # date (not datetime) — promote to datetime
+    try:
+        from datetime import date as _date
+        if isinstance(val, _date):
+            return _dt(val.year, val.month, val.day)
+    except Exception:
+        pass
+    if isinstance(val, int):
+        try:
+            if 1 <= val <= 2958465:
+                return _fxl(val)
+            return None
+        except Exception:
+            try:
+                return _dt(1899, 12, 30) + timedelta(days=val)
+            except Exception:
+                return None
+    if isinstance(val, float):
+        try:
+            if 1 < val < 2958465:
+                return _fxl(val)
+            return None
+        except Exception:
+            return None
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        for fmt in _DATE_FMTS:
+            try:
+                return _dt.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
+    return None
+
+
+def _fix_int_dates(ws):
+    """
+    Scan every cell in ws and fix any int/float/string sitting in a date-formatted
+    cell.  openpyxl crashes on wb.save() with 'int has no attribute year' when such
+    cells exist.  Must be called on every workbook before saving.
+    """
+    from openpyxl.styles.numbers import is_date_format as _idf
 
     for row in ws.iter_rows():
         for cell in row:
@@ -2273,25 +2335,13 @@ def _fix_int_dates(ws):
                     continue
             except Exception:
                 continue
-            if isinstance(cell.value, int):
-                try:
-                    if 1 <= cell.value <= 2958465:
-                        cell.value = _fxl(cell.value)
-                    else:
-                        cell.value = None
-                except Exception:
-                    try:
-                        cell.value = _dt(1899, 12, 30) + timedelta(days=cell.value)
-                    except Exception:
-                        cell.value = None
-            elif isinstance(cell.value, float):
-                try:
-                    if 1 < cell.value < 2958465:
-                        cell.value = _fxl(cell.value)
-                    else:
-                        cell.value = None
-                except Exception:
-                    cell.value = None
+            # Already a proper datetime/date → openpyxl handles it fine
+            from datetime import datetime as _dt, date as _date
+            if isinstance(cell.value, (_dt, _date)):
+                continue
+            # Anything else (int, float, string) in a date-formatted cell must be
+            # converted — otherwise openpyxl raises 'int has no attribute year'.
+            cell.value = _parse_date_value(cell.value)
 
 
 def _do_excel_write(project_id, updates, role):
@@ -2330,9 +2380,11 @@ def _do_excel_write(project_id, updates, role):
         if row in row_updates:
             u = row_updates[row]
             if "actual_start" in u and u["actual_start"]:
-                ws[f"X{row}"] = u["actual_start"]
+                # Always convert to datetime — writing a raw string/int into a
+                # date-formatted cell causes 'int has no attribute year' on save.
+                ws[f"X{row}"] = _parse_date_value(u["actual_start"])
             if "actual_end" in u and u["actual_end"]:
-                ws[f"Y{row}"] = u["actual_end"]
+                ws[f"Y{row}"] = _parse_date_value(u["actual_end"])
             if "percent_complete" in u and u["percent_complete"] is not None:
                 try:
                     ws[f"Z{row}"] = float(u["percent_complete"]) / 100.0
@@ -2351,9 +2403,9 @@ def _do_excel_write(project_id, updates, role):
                     u = task_updates[row_key]
                     ws[f"Z{row}"] = u["percent_complete"] / 100.0
                     if "actual_start" in u and u["actual_start"]:
-                        ws[f"X{row}"] = u["actual_start"]
+                        ws[f"X{row}"] = _parse_date_value(u["actual_start"])
                     if "actual_end" in u and u["actual_end"]:
-                        ws[f"Y{row}"] = u["actual_end"]
+                        ws[f"Y{row}"] = _parse_date_value(u["actual_end"])
                     ws[f"AF{row}"] = u.get("remark") or ""
 
     # Fix again after updates in case any new values landed in date-formatted cells
