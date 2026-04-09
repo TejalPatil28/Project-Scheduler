@@ -17,6 +17,8 @@ from excel_db import (
     get_discipline_dirs,
     OWNER_MAP,
     update_monitor_cell,
+    ROLE_TO_DEPT,        # ← add this
+    OWNER_MAP,
     update_monitor_timestamp,
     load_user_overdue_status,
 )
@@ -270,20 +272,7 @@ def get_monitor_sheet():
     role = user.get("role", "sw_tl")
     
     # Map role to department
-    role_to_dept = {
-    "sw_tl": "SW",
-    "hw_tl": "HW", 
-    "mfg_tl": "MFG",
-    "pm": "PM",
-    "admin": "SW",
-    "head": "SW",
-    "sw_head": "SW",
-    "hw_head": "HW",
-    "mfg_head": "MFG",
-    "pm_head": "PM"
-    }
-    
-    department = role_to_dept.get(role, "SW")
+    department = ROLE_TO_DEPT.get(role, "SW")
     
     # Use find_monitor_file instead
     fpath = find_monitor_file(department)

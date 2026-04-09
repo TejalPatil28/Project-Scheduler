@@ -107,7 +107,7 @@ DEPT_CONFIG = {
         "project_id_col": "B",
         "head_col":       "C",
         "tl_col":         "D",
-        "timestamp_col":  "BA",
+        "timestamp_col":  "AZ",
         "data_start_row": 12,
     },
 }
@@ -942,7 +942,7 @@ def get_all_monitor_projects(role="sw_tl"):
             today = date.today()
 
             for coord, cell_info in cells.items():
-                if coord.startswith(pid_col) and cell_info.get('v'):
+                if coord.startswith(pid_col) and coord[len(pid_col):].isdigit():
                     row_num = int(coord[len(pid_col):])
                     project_id = str(cell_info.get('v')).strip()
 
@@ -2317,65 +2317,85 @@ def _parse_date_value(val):
         return None
     return None
 
-
-def _fix_int_dates(ws):
+def _safe_fix_schedule_dates(ws):
     """
-    Scan every cell in ws and fix any int/float/string sitting in a date-formatted
-    cell.  openpyxl crashes on wb.save() with 'int has no attribute year' when such
-    cells exist.  Must be called on every workbook before saving.
+    Full sheet scan: fix every date-formatted cell holding a raw int/float
+    so openpyxl does not crash with 'int has no attribute year' on save.
+    Formula cells (data_type == 'f') are always skipped.
     """
     from openpyxl.styles.numbers import is_date_format as _idf
+    from openpyxl.utils.datetime import from_excel
+    from datetime import datetime as _dt, timedelta
 
+    fixed = 0
     for row in ws.iter_rows():
         for cell in row:
-            if cell.value is None:
+            # Only care about raw int or float
+            if not isinstance(cell.value, (int, float)):
                 continue
+            # Never touch formula cells
+            if cell.data_type == 'f':
+                continue
+            # Only act on date-formatted cells
             try:
                 if not cell.number_format or not _idf(cell.number_format):
                     continue
             except Exception:
                 continue
-            # Already a proper datetime/date → openpyxl handles it fine
-            from datetime import datetime as _dt, date as _date
-            if isinstance(cell.value, (_dt, _date)):
-                continue
-            # Anything else (int, float, string) in a date-formatted cell must be
-            # converted — otherwise openpyxl raises 'int has no attribute year'.
-            cell.value = _parse_date_value(cell.value)
+            # Convert valid serial to datetime; clear anything invalid
+            if 1 <= cell.value <= 2958465:
+                try:
+                    cell.value = from_excel(cell.value)
+                    fixed += 1
+                except Exception:
+                    try:
+                        cell.value = _dt(1899, 12, 30) + timedelta(days=int(cell.value))
+                        fixed += 1
+                    except Exception:
+                        cell.value = None
+            else:
+                cell.value = None
 
-
+    if fixed:
+        print(f"[Background] Fixed {fixed} date-serial cell(s) before save")
 def _do_excel_write(project_id, updates, role):
     """Actually write to Excel file (this is the slow part)"""
     from openpyxl import load_workbook
     import os
-
+ 
     projects_dir, _, _, _ = get_discipline_dirs(role)
     fpath = os.path.join(projects_dir, project_id + ".xlsx")
-
+ 
     if not os.path.exists(fpath):
         fpath = os.path.join(projects_dir, project_id + ".xlsb")
         if not os.path.exists(fpath):
             print(f"[Background] Excel file not found for {project_id}")
             return
-
+ 
     try:
-        wb = load_workbook(fpath, keep_links=False)
+        # IMPORTANT: Do NOT use data_only=True or keep_links=False here.
+        # Loading with data_only=True and then saving permanently destroys
+        # all formula cells (openpyxl replaces them with cached values or None).
+        # keep_links=False can also corrupt external references.
+        wb = load_workbook(fpath)
     except Exception as e:
         print(f"[Background] Error loading {project_id}: {e}")
         return
-
+ 
     ws = wb.active
-
-    # Fix all int/float values sitting in date-formatted cells BEFORE updates
-    _fix_int_dates(ws)
-
+ 
+    # Fix all int/float values sitting in date-formatted cells BEFORE updates.
+    # _safe_fix_schedule_dates only touches known date columns (X, Y, J-Q, V, W)
+    # and skips formula cells (data_type == 'f'), so formulas are never overwritten.
+    _safe_fix_schedule_dates(ws)
+ 
     # Apply updates
     row_updates  = {u["_row"]:      u for u in updates if "_row"      in u}
     task_updates = {u["task_key"]:  u for u in updates if "task_key"  in u}
-
+ 
     TASK_START_ROW = 9
     TASK_END_ROW   = 55
-
+ 
     for row in range(TASK_START_ROW, TASK_END_ROW + 1):
         if row in row_updates:
             u = row_updates[row]
@@ -2407,9 +2427,20 @@ def _do_excel_write(project_id, updates, role):
                     if "actual_end" in u and u["actual_end"]:
                         ws[f"Y{row}"] = _parse_date_value(u["actual_end"])
                     ws[f"AF{row}"] = u.get("remark") or ""
+ 
+    # Second pass — catch any ints that crept in during the update writes
+    _safe_fix_schedule_dates(ws)
 
-    # Fix again after updates in case any new values landed in date-formatted cells
-    _fix_int_dates(ws)
+    # DEBUG: find exactly which cell still has int in date-format before save
+    from openpyxl.styles.numbers import is_date_format as _idf2
+    for _row in ws.iter_rows():
+        for _cell in _row:
+            if isinstance(_cell.value, (int, float)) and _cell.number_format:
+                try:
+                    if _idf2(_cell.number_format):
+                        print(f"[DEBUG] PROBLEM CELL: {_cell.coordinate} value={_cell.value} data_type={_cell.data_type} fmt={_cell.number_format}")
+                except Exception:
+                    pass
 
     try:
         wb.save(fpath)
@@ -2417,7 +2448,7 @@ def _do_excel_write(project_id, updates, role):
     except Exception as e:
         print(f"[Background] Error writing {project_id}: {e}")
         return
-
+ 
     # Regenerate sysmemory from the freshly saved file
     try:
         _, _, sched_cache, _ = get_discipline_dirs(role)
@@ -2429,6 +2460,67 @@ def queue_excel_write(project_id, updates, role):
     """Queue a project for background Excel write"""
     _start_background_worker()  # Ensure worker is running
     _excel_write_queue.put((project_id, updates, role))
+
+def _safe_fix_monitor_dates(ws, department):
+    """
+    Scan ALL cells in the monitor sheet and fix any date-formatted cell that
+    holds a raw int/float (Excel serial) instead of a proper datetime object.
+ 
+    openpyxl's serialiser calls `to_excel(value, epoch)` on every cell whose
+    number_format is a date pattern.  If the value is a plain int/float it
+    crashes with:
+        AttributeError: 'int' object has no attribute 'year'
+ 
+    Restricting to a single column (BA) was not enough because the monitor
+    sheet can have date-formatted cells in other columns too (e.g. columns
+    inherited from the source xlsx that already had date formats applied before
+    any data was written).  We now scan the entire used range so no stray
+    int/float in a date cell can slip through.
+ 
+    Formula cells are always skipped — we never destroy a formula.
+    """
+    from openpyxl.styles.numbers import is_date_format as _idf
+    from openpyxl.utils.datetime import from_excel
+    from datetime import datetime
+ 
+    fixed = 0
+    for row in ws.iter_rows():
+        for cell in row:
+            # Skip empty cells
+            if cell.value is None:
+                continue
+ 
+            # CRITICAL: Never overwrite formula cells.
+            if cell.data_type == 'f' or (
+                isinstance(cell.value, str) and str(cell.value).startswith('=')
+            ):
+                continue
+ 
+            # Only act on date-formatted cells that hold a raw number
+            if not isinstance(cell.value, (int, float)):
+                continue
+ 
+            try:
+                if not cell.number_format or not _idf(cell.number_format):
+                    continue
+            except Exception:
+                continue
+ 
+            # Valid Excel date serial range (1 = 1900-01-01, 2958465 = 9999-12-31)
+            if 1 <= cell.value <= 2958465:
+                try:
+                    cell.value = from_excel(cell.value)
+                    fixed += 1
+                except Exception:
+                    # If conversion fails, clear the value so openpyxl won't
+                    # crash trying to serialise a bare int as a date.
+                    cell.value = None
+            else:
+                # Out-of-range numeric in a date cell — clear it to avoid crash.
+                cell.value = None
+ 
+    if fixed:
+        print(f"[Monitor] Fixed {fixed} date-serial cells before save")                            
 
 def _do_monitor_excel_write(department, updates):
     """Write monitor cache updates to actual Excel file in background"""
@@ -2450,18 +2542,36 @@ def _do_monitor_excel_write(department, updates):
     try:
         # Load workbook
         try:
-            wb = load_workbook(monitor_path, data_only=True)
+            # CRITICAL: Do NOT use data_only=True here.
+            # Loading with data_only=True and then saving permanently destroys
+            # all formula cells — openpyxl replaces them with their cached
+            # values (or None), corrupting the file on every write.
+            wb = load_workbook(monitor_path)
         except EOFError:
             print(f"[Monitor Background] EOFError - file may be corrupted: {monitor_path}")
             return
         
         ws = wb["SWMon"] if "SWMon" in wb.sheetnames else wb.active
-
+ 
+        # Use the correct department sheet name from config
+        dept_sheet = DEPT_CONFIG.get(department, {}).get("monitor_sheet", "SWMon")
+        if dept_sheet in wb.sheetnames:
+            ws = wb[dept_sheet]
+        elif "SWMon" in wb.sheetnames:
+            ws = wb["SWMon"]
+        else:
+            ws = wb.active
+ 
         # Process all updates
         for coord, value in updates.items():
             if value is None:
                 continue
             cell = ws[coord]
+ 
+            # CRITICAL: Never overwrite formula cells — this would destroy the
+            # formula and replace it permanently with a raw value.
+            if cell.data_type == 'f' or (isinstance(cell.value, str) and str(cell.value).startswith('=')):
+                continue
             
             # Handle date format cells (BA column)
             cell_is_date_fmt = False
@@ -2485,13 +2595,13 @@ def _do_monitor_excel_write(department, updates):
             # No conversion needed for non-date cells
             
             cell.value = value
-
+ 
         # Fix any pre-existing int/float values in date-formatted cells before saving
-        _fix_int_dates(ws)
-
+        _safe_fix_monitor_dates(ws, department)
+ 
         wb.save(monitor_path)
         print(f"[Monitor Background] Excel saved: {monitor_path}")
-
+ 
     except Exception as e:
         import traceback
         print(f"[Monitor Background] Error writing to Excel: {e}")
@@ -2526,13 +2636,11 @@ def _start_monitor_worker():
     _monitor_thread_started = True
     print("[Monitor Background] Monitor write worker started")
 
-
 def queue_monitor_excel_write(department, updates):
     """Queue a monitor Excel write to the single persistent background worker.
     Never spawns a new thread — all writes are serialised through the queue."""
     _start_monitor_worker()
     _monitor_write_queue.put((department, updates))
-
 
 def update_monitor_timestamp(project_id, timestamp, role="sw_tl"):
     from datetime import datetime
@@ -2592,17 +2700,8 @@ def update_monitor_task_percentages(project_id, role="sw_tl"):
     import os
     from openpyxl.utils import get_column_letter as gcl
     
-    # Map role to department
-    role_to_dept = {
-        "sw_tl": "SW",
-        "hw_tl": "HW", 
-        "mfg_tl": "MFG",
-        "pm": "PM",
-        "admin": "SW",
-        "head": "SW"
-    }
-    
-    department = role_to_dept.get(role, "SW")
+    department = ROLE_TO_DEPT.get(role, "SW")
+    cfg = DEPT_CONFIG[department]
     monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
     
     if not os.path.exists(monitor_cache_path):
@@ -2617,10 +2716,11 @@ def update_monitor_task_percentages(project_id, role="sw_tl"):
         cells = monitor_data.get('cells', {})
         
         # Find the row with matching project ID in COLUMN F
+        pid_col = cfg.get("file_col", cfg.get("project_id_col", "B"))
         found_row = None
         for coord, cell_info in cells.items():
-            if coord.startswith('B') and cell_info.get('v') == project_id:
-                found_row = int(coord[1:])
+            if coord.startswith(pid_col) and cell_info.get('v') == project_id:
+                found_row = int(coord[len(pid_col):])
                 break
         
         if not found_row:
@@ -2633,9 +2733,10 @@ def update_monitor_task_percentages(project_id, role="sw_tl"):
         start_col_idx = 54  # BB
         end_col_idx = 100   # CV
         
+        header_row = cfg["data_start_row"] - 2
         for col_idx in range(start_col_idx, end_col_idx + 1):
             col_letter = gcl(col_idx)
-            coord = f"{col_letter}10"  # row 10 is header row
+            coord = f"{col_letter}{header_row}"  # row 10 is header row
             header_val = cells.get(coord, {}).get('v')
             if header_val and str(header_val).strip():
                 col_headers[str(header_val).strip()] = col_letter

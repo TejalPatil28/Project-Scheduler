@@ -9,47 +9,12 @@ var state = {
   sheetCache: {},  // project_id -> sheet data, client-side cache
 };
 
-// ── Column width configuration (percentage-based, similar to monitor) ──
-var SHEET_COL_WIDTHS = {
-  // Default width for all columns (percentage)
-  _default: "5%",
-  
-  // Specific column overrides
-  "E": "2%",   // Buffer Time
-  "F": "2%",   // PH
-  "G": "2%",   // TFO
-  "H": "2.5%",   // Phase ID
-  "I": "6%",  // Task Description (wider)
-  "J": "5%",   // P1 Start Date
-  "K": "5%",   // P1 End Date
-  "L": "5%",   // P2 Start Date
-  "M": "5%",   // P2 End Date
-  "N": "5%",   // P3 Start Date
-  "O": "5%",   // P3 End Date
-  "P": "4%",   // Org Plan Date
-  "Q": "4%",   // Org End Date
-  "R": "4%",   // Ref. Lead Time
-  "S": "2.5%",   // Lead Time
-  "T": "2%",   // Intlk
-  "U": "2.5%",   // Effort Days
-  "V": "4%",   // Cur. Start Date
-  "W": "4%",   // Cur. End Date
-  "X": "4.5%",   // Act. Start Date
-  "Y": "4.5%",   // Act. End Date
-  "Z": "3%",   // % Complete
-  "AA": "3%",  // Exptd % Completion
-  "AB": "4%",  // Alert Date for 80%
-  "AD": "5%",  // Help Req. from
-  "AF": "7%", // Remark
-};
-
-// ── Column group definitions for project sheet (hardcoded, single group J-R) ──
-var PROJECT_COL_GROUPS = [
-    { key: "planning_dates", label: "Planning Dates", cols: ["J","K","L","M","N","O","P","Q","R"] }
-];
-
+// ── getSheetColumnWidth: reads from active schedule config ────
+// schedule_config.js must be loaded before app.js.
 function getSheetColumnWidth(col) {
-  return SHEET_COL_WIDTHS[col] || SHEET_COL_WIDTHS._default;
+  var cfg = (state && state.user) ? getScheduleConfig(state.user.role) : SCHEDULE_CONFIGS["SW"];
+  var widths = cfg ? cfg.colWidths : {};
+  return widths[col] || widths._default || "5%";
 }
 
 function applyTheme(t) {
@@ -74,8 +39,7 @@ function toast(msg, type) {
 
 // ── Helpers ────────────────────────────────────────────────────
 function roleLabel(role) {
-  var map = {admin:"Admin",head:"Head",pm:"Project Manager",hw_tl:"HW Team Lead",sw_tl:"SW Team Lead",mfg_tl:"MFG Team Lead"};
-  return map[role] || role;
+  return userRoleLabel(role);  // delegated to schedule_config.js ROLE_LABELS
 }
 
 function phaseColor(ph) {
@@ -948,18 +912,20 @@ function filterMasterList(searchTerm) {
   var initials = (user.short_name || "").trim().toUpperCase();
   var isHead = (role === "head" || role === "admin" || (role && role.endsWith("_head")));
 
-  // Apply role filtering
+  // Apply role filtering — column keys from schedule config
+  var schedCfg  = getScheduleConfig(role);
+  var masterCols = (schedCfg && schedCfg.masterListCols) || { head: "swh_head", tl: "swe_name" };
   var roleFiltered;
   if (isHead) {
     roleFiltered = masterList;
   } else {
-    var swhRows = masterList.filter(function(m) {
-      return (m.swh_head || "").trim().toUpperCase() === initials;
+    var headRows = masterList.filter(function(m) {
+      return (m[masterCols.head] || "").trim().toUpperCase() === initials;
     });
-    roleFiltered = swhRows.length > 0
-      ? swhRows
+    roleFiltered = headRows.length > 0
+      ? headRows
       : masterList.filter(function(m) {
-          return (m.swe_name || "").trim().toUpperCase() === initials;
+          return (m[masterCols.tl] || "").trim().toUpperCase() === initials;
         });
   }
 
@@ -1472,7 +1438,8 @@ function renderExcelMirror(container, data) {
   console.log("All columns in grid:", cols);
   console.log("Does column R exist in cols?", cols.indexOf("R") !== -1);
   console.log("Index of R:", cols.indexOf("R"));
-  var colGroups    = PROJECT_COL_GROUPS;
+  var schedCfg  = getScheduleConfig((state.user && state.user.role) || "sw_tl");
+  var colGroups = schedCfg ? schedCfg.colGroups : [];
   var editableFill = data.editable_fill || null;
   var infoRows     = data.info_rows    || [];
   var headerRows   = data.header_rows  || [];
@@ -1483,96 +1450,57 @@ function renderExcelMirror(container, data) {
   var headerRowSet = {};
   headerRows.forEach(function(r) { headerRowSet[r] = true; });
 
-  // Add these constants
-  var TASK_START_ROW = 9;
-  var TASK_END_ROW = 55;
+  // ── Pull all rendering config from schedule_config.js ───────
+  var TASK_START_ROW = schedCfg ? schedCfg.taskStartRow : 9;
+  var TASK_END_ROW   = schedCfg ? schedCfg.taskEndRow   : 55;
+  var skipColsSet    = {};
+  ((schedCfg && schedCfg.skipCols) || ["AC","AE"]).forEach(function(c){ skipColsSet[c] = true; });
 
-  var AD_OPTIONS = ["Engineering","Purchase","Software","Project Management","Manufacturing","Sales","Client"];
+  // Help dropdown (AD column equivalent)
+  var helpDropdown  = (schedCfg && schedCfg.helpDropdown) || {};
+  var AD_OPTIONS    = helpDropdown.options || [];
+  var AD_COLORS     = isDark ? (helpDropdown.colorsDark || {}) : (helpDropdown.colorsLight || {});
+  var AD_FG_DARK    = helpDropdown.fgDark || {};
 
-    // ── COLOR CONFIGURATION ─────────────────────────────────
-  // Define all custom background colors for columns/ranges
-  // Add new rules here as needed
-    var colorRules = isDark ? [
-      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#2a2a2a" },
-      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#152030" },
-    ] : [
-      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#d9d9d9" },
-      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#90b4df" },
-    ];
-    // AD Column color mapping based on dropdown value
-    var AD_COLORS = isDark ? {
-        "engineering":        "#3d1a1a",
-        "purchase":           "#1a2e14",
-        "software":           "#0e2233",
-        "project management": "#0a1a30",
-        "manufacturing":      "#1a2a14",
-        "sales":              "#003333",
-        "client":             "#2a0a2a"
-    } : {
-        "engineering":        "#ffb3b3",
-        "purchase":           "#5f933c",
-        "software":           "#0096cc",
-        "project management": "#005fa3",
-        "manufacturing":      "#2f491e",
-        "sales":              "#00d9d9",
-        "client":             "#6d006d"
-    };
+  // Color rules — map from config format to existing internal format
+  var _cfgColorRules = (schedCfg && schedCfg.colorRules)
+    ? (isDark ? schedCfg.colorRules.dark : schedCfg.colorRules.light)
+    : [];
+  var colorRules = _cfgColorRules.map(function(r) {
+    return { columns: r.cols, rows: r.rows, color: r.color };
+  });
+
+  // Text rules
+  var _cfgTextRules = (schedCfg && schedCfg.textRules) || [];
   
-        // ── TEXT RULES CONFIGURATION ─────────────────────────────────
-    // Define text color rules based on cell comparisons
-    var textRules = [
-        { 
-            name: "Lead Time mismatch", 
-            column: "S",           // Column to apply text color to
-            condition: "not_equal", 
-            compare_with: "R",     // Compare with this column
-            rows: "9+",            // Apply to rows 9 and above
-            color: "var(--red)"    // Text color when condition is true
-        },
-        {
-            name: "Progress behind plan",
-            column: "Z",
-            condition: "less_than",
-            compare_with: "AA",
-            rows: "9+",
-            color: "var(--red)"
-        },
-    ];
-    
-    // Function to check if a text rule applies to a cell
+  // ── Text rule evaluator (config-driven) ──────────────────────
+  // Rules come from schedCfg.textRules — field names: col, condition, compareWith, rows, color
   function getTextRuleColor(col, row, cells) {
-        for (var i = 0; i < textRules.length; i++) {
-            var rule = textRules[i];
-            if (rule.column !== col) continue;
-            if (rule.rows === "9+" && row < 9) continue;
-            if (rule.rows === "all" || rule.rows === "9+") {
+    for (var i = 0; i < _cfgTextRules.length; i++) {
+      var rule = _cfgTextRules[i];
+      if (rule.col !== col) continue;
+      if (rule.rows === "9+" && row < 9) continue;
 
-                if (rule.condition === "not_equal" && rule.compare_with) {
-                    var currentVal = cells[rule.column + row] ? String(cells[rule.column + row].v || "") : "";
-                    var compareVal = cells[rule.compare_with + row] ? String(cells[rule.compare_with + row].v || "") : "";
-                    var normCurrent = normalizeValue(currentVal);
-                    var normCompare = normalizeValue(compareVal);
-                    if (normCurrent === "" && typeof normCompare === "number") normCurrent = 0;
-                    if (normCompare === "" && typeof normCurrent === "number") normCompare = 0;
-                    if (normCurrent !== normCompare) {
-                        return rule.color;
-                    }
-                }
+      if (rule.condition === "not_equal" && rule.compareWith) {
+        var curVal  = cells[rule.col         + row] ? String(cells[rule.col         + row].v || "") : "";
+        var cmpVal  = cells[rule.compareWith + row] ? String(cells[rule.compareWith + row].v || "") : "";
+        var nCur = normalizeValue(curVal);
+        var nCmp = normalizeValue(cmpVal);
+        if (nCur === "" && typeof nCmp === "number") nCur = 0;
+        if (nCmp === "" && typeof nCur === "number") nCmp = 0;
+        if (nCur !== nCmp) return rule.color;
+      }
 
-                if (rule.condition === "less_than" && rule.compare_with) {
-                    var currentVal = cells[rule.column + row] ? String(cells[rule.column + row].v || "") : "";
-                    var compareVal = cells[rule.compare_with + row] ? String(cells[rule.compare_with + row].v || "") : "";
-                    var numCurrent = parseFloat(currentVal.replace("%", "").trim());
-                    var numCompare = parseFloat(compareVal.replace("%", "").trim());
-                    if (!isNaN(numCurrent) && !isNaN(numCompare) && numCurrent < numCompare) {
-                        return rule.color;
-                    }
-                }
-
-            }
-        }
-        return null;
+      if (rule.condition === "less_than" && rule.compareWith) {
+        var curVal  = cells[rule.col         + row] ? String(cells[rule.col         + row].v || "") : "";
+        var cmpVal  = cells[rule.compareWith + row] ? String(cells[rule.compareWith + row].v || "") : "";
+        var numCur  = parseFloat(curVal.replace("%", "").trim());
+        var numCmp  = parseFloat(cmpVal.replace("%", "").trim());
+        if (!isNaN(numCur) && !isNaN(numCmp) && numCur < numCmp) return rule.color;
+      }
     }
+    return null;
+  }
 
     // Helper function to normalize values for comparison
     function normalizeValue(val) {
@@ -1620,10 +1548,13 @@ function renderExcelMirror(container, data) {
     var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;color:" + inputTextColor + ";";
     var input = "";
 
-    if (col === "X" || col === "Y") {
-      // Date picker
+    // editableCols type from config drives input type
+    var _editColCfg = schedCfg && schedCfg.editableCols ? schedCfg.editableCols[col] : null;
+    var _colType    = _editColCfg ? _editColCfg.type : null;
+    var _helpCol    = helpDropdown.col || "AD";
+
+    if (_colType === "date") {
       var dateVal = curVal ? curVal : "";
-      // Convert dd-Mon-yy to yyyy-mm-dd for input[type=date]
       if (dateVal) {
         try {
           var d = new Date(dateVal);
@@ -1631,18 +1562,17 @@ function renderExcelMirror(container, data) {
         } catch(e) {}
       }
       input = "<input type=\"date\" style=\"" + inputStyle + "\" value=\"" + dateVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
-    } else if (col === "Z") {
-      // Number 0-100 — value from Excel is e.g. "100%" so strip the %
+    } else if (_colType === "number") {
+      var _min = (_editColCfg && _editColCfg.min !== undefined) ? _editColCfg.min : 0;
+      var _max = (_editColCfg && _editColCfg.max !== undefined) ? _editColCfg.max : 100;
       var numVal = String(curVal || "0").replace("%", "").trim();
-      input = "<input type=\"number\" min=\"0\" max=\"100\" style=\"" + inputStyle + "\" value=\"" + numVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
-    } else if (col === "AD") {
-      // Dropdown
+      input = "<input type=\"number\" min=\"" + _min + "\" max=\"" + _max + "\" style=\"" + inputStyle + "\" value=\"" + numVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
+    } else if (_colType === "dropdown" || col === _helpCol) {
       var opts = AD_OPTIONS.map(function(o) {
         return "<option value=\"" + o + "\"" + (o === curVal ? " selected" : "") + ">" + o + "</option>";
       }).join("");
       input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this);__applyAdColor(this)\" ><option value=\"\"></option>" + opts + "</select>";
-    } else if (col === "AF") {
-      // Remarks - free text input
+    } else if (_colType === "text") {
       input = "<input type=\"text\" style=\"" + inputStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
     }
     return input;
@@ -1657,14 +1587,18 @@ function renderExcelMirror(container, data) {
     g.cols.forEach(function(c) { colToGroup[c] = gi; });
   });
 
-  // Returns true if this col should be hidden (all cols in group hide when collapsed)
+  // Returns true if this col should be hidden due to group collapse
   function isCollapsedCol(col) {
     var gi = colToGroup[col];
     if (gi === undefined || gi < 0) return false;
     if (!collapseState[gi]) return false;
-    // When collapsed, hide all cols EXCEPT the last one (which shows as placeholder)
     var lastCol = colGroups[gi].cols[colGroups[gi].cols.length - 1];
     return col !== lastCol;
+  }
+
+  // Returns true if this col should be skipped entirely (from config.skipCols)
+  function isSkippedCol(col) {
+    return !!skipColsSet[col];
   }
 
   function borderStyle(weight) {
@@ -1832,7 +1766,7 @@ function renderExcelMirror(container, data) {
     var totalWidthPct = 0;
     for (var ci = 0; ci < cols.length; ci++) {
       var colCheck = cols[ci];
-      if (colCheck === "AC" || colCheck === "AE") continue;
+      if (isSkippedCol(colCheck)) continue;
       if (isCollapsedCol(colCheck)) continue;  // ← skip hidden cols
       var w = getSheetColumnWidth(colCheck);
       var pctVal = parseFloat(w);
@@ -1963,7 +1897,7 @@ function renderExcelMirror(container, data) {
       var ci = 0;
       while (ci < cols.length) {
         var col = cols[ci];
-        if (col === "AC" || col === "AE") { ci++; continue; }
+        if (isSkippedCol(col)) { ci++; continue; }
         var gi  = colToGroup[col];
 
         if (gi !== undefined && gi >= 0 && cols[ci] === colGroups[gi].cols[0]) {
@@ -2006,67 +1940,8 @@ function renderExcelMirror(container, data) {
     // ── TBODY ──
     html += '</thead>';
 
-    // ── CUSTOM HEADER ROW (replaces hidden Excel rows 6-8) ───────
-    // Defines semantic column headers for the task grid
-    var customHeaderDefs = {
-      // col letter -> label, and optional bg/text overrides
-      "E":  { label: "Buffer Time",         bg: "#2a2010", fg: "#d4a96a" },
-      "F":  { label: "PH",           bg: "#2a2010", fg: "#d4a96a" },
-      "G":  { label: "TFO",       bg: "#2a2010", fg: "#d4a96a" },
-      "H":  { label: "Phase ID",     bg: "#2a2010", fg: "#d4a96a" },
-      "I":  { label: "Task Description",     bg: "#2a2010", fg: "#d4a96a" },
-      "J":  { label: "P1 Start Date",         bg: "#2a2010", fg: "#d4a96a" },
-      "K":  { label: "P1 End Date",          bg: "#2a2010", fg: "#d4a96a" },
-      "L":  { label: "P2 Start Date",   bg: "#2a2010", fg: "#d4a96a" },
-      "M":  { label: "P2 End Date",           bg: "#2a2010", fg: "#d4a96a" },
-      "N":  { label: "P3 Start Date",     bg: "#2a2010", fg: "#d4a96a" },
-      "O":  { label: "P3 End Date",       bg: "#2a2010", fg: "#d4a96a" },
-      "P":  { label: "Org Plan Date",       bg: "#2a2010", fg: "#d4a96a" },
-      "Q":  { label: "Org End Date",        bg: "#2a2010", fg: "#d4a96a" },
-      "R":  { label: "Ref. Lead Time",       bg: "#2a2010", fg: "#d4a96a" },
-      "S":  { label: "Lead Time",       bg: "#2a2010", fg: "#d4a96a" },
-      "T":  { label: "Intlk",         bg: "#2a2010", fg: "#d4a96a" },
-      "U":  { label: "Effort Days",         bg: "#2a2010", fg: "#d4a96a" },
-      "V":  { label: "Cur. Start Date",        bg: "#2a2010", fg: "#d4a96a" },
-      "W":  { label: "Cur. End Date",     bg: "#2a2010", fg: "#d4a96a" },
-      "X":  { label: "Act. Start Date",    bg: "#2a2010", fg: "#d4a96a" },
-      "Y":  { label: "Act. End Date",      bg: "#2a2010", fg: "#d4a96a" },
-      "Z":  { label: "% Complete",        bg: "#2a2010", fg: "#d4a96a" },
-      "AA": { label: "Exptd % Completion",      bg: "#2a2010", fg: "#d4a96a" },
-      "AB": { label: "Alert Date for 80%",        bg: "#2a2010", fg: "#d4a96a" },
-      "AD": { label: "Help Req. from",     bg: "#2a2010", fg: "#d4a96a" },
-      "AF": { label: "Remark",        bg: "#2a2010", fg: "#d4a96a" },
-    };
-    // Light mode overrides
-    var customHeaderDefsLight = {
-      "E":  { label: "Buffer Time",         bg: "#fcd5b4", fg: "#000000" },
-      "F":  { label: "PH",           bg: "#fcd5b4", fg: "#000000" },
-      "G":  { label: "TFO",       bg: "#fcd5b4", fg: "#000000" },
-      "H":  { label: "Phase ID",     bg: "#fcd5b4", fg: "#000000" },
-      "I":  { label: "Task Description",     bg: "#fcd5b4", fg: "#000000" },
-      "J":  { label: "P1 Start Date",         bg: "#fcd5b4", fg: "#000000" },
-      "K":  { label: "P1 End Date",          bg: "#fcd5b4", fg: "#000000" },
-      "L":  { label: "P2 Start Date",   bg: "#fcd5b4", fg: "#000000" },
-      "M":  { label: "P2 End Date",           bg: "#fcd5b4", fg: "#000000" },
-      "N":  { label: "P3 Start Date",     bg: "#fcd5b4", fg: "#000000" },
-      "O":  { label: "P3 End Date",       bg: "#fcd5b4", fg: "#000000" },
-      "P":  { label: "Org Plan Date",       bg: "#fcd5b4", fg: "#000000" },
-      "Q":  { label: "Org End Date",        bg: "#fcd5b4", fg: "#000000" },
-      "R":  { label: "Ref. Lead Time",       bg: "#fcd5b4", fg: "#000000" },
-      "S":  { label: "Lead Time",       bg: "#fcd5b4", fg: "#000000" },
-      "T":  { label: "Intlk",         bg: "#fcd5b4", fg: "#000000" },
-      "U":  { label: "Effort Days",         bg: "#fcd5b4", fg: "#000000" },
-      "V":  { label: "Cur. Start Date",        bg: "#fcd5b4", fg: "#000000" },
-      "W":  { label: "Cur. End Date",     bg: "#fcd5b4", fg: "#000000" },
-      "X":  { label: "Act. Start Date",    bg: "#fcd5b4", fg: "#000000" },
-      "Y":  { label: "Act. End Date",      bg: "#fcd5b4", fg: "#000000" },
-      "Z":  { label: "% Complete",        bg: "#fcd5b4", fg: "#000000" },
-      "AA": { label: "Exptd % Completion",      bg: "#fcd5b4", fg: "#000000" },
-      "AB": { label: "Alert Date for 80%",        bg: "#fcd5b4", fg: "#000000" },
-      "AD": { label: "Help Req. from",     bg: "#fcd5b4", fg: "#000000" },
-      "AF": { label: "Remark",        bg: "#fcd5b4", fg: "#000000" },
-    };
-    var chDefs = isDark ? customHeaderDefs : customHeaderDefsLight;
+    // ── Custom header row — driven by schedule_config.js ─────
+    var chDefs = schedCfg ? (isDark ? schedCfg.customHeaders.dark : schedCfg.customHeaders.light) : {};
     var chRowBg    = isDark ? "#141414" : "#e8edf5";
     var chBorder   = isDark ? "#333333" : "#c0c7d8";
     var chFallbackBg = isDark ? "#1a1a2e" : "#e8edf5";
@@ -2076,7 +1951,7 @@ function renderExcelMirror(container, data) {
     html += '<tr style="height:26px;">';
     for (var chi = 0; chi < cols.length; chi++) {
       var chCol = cols[chi];
-      if (chCol === "AC" || chCol === "AE") continue;
+      if (isSkippedCol(chCol)) continue;
       if (isCollapsedCol(chCol)) continue;
       var chCw = getSheetColumnWidth(chCol);
       var chDef = chDefs[chCol] || {};
@@ -2158,7 +2033,7 @@ function renderExcelMirror(container, data) {
 
         var col3  = cols[ci3];
 
-        if (col3 === "AC" || col3 === "AE") continue;
+        if (isSkippedCol(col3)) continue;
 
         if (col3 === "R") console.log("Column R found at row", r, "value:", cells[col3 + r] ? cells[col3 + r].v : "null");
         var coord = col3 + r;
@@ -2182,10 +2057,11 @@ function renderExcelMirror(container, data) {
         ];
         // ── EDITABILITY — computed once, used by both bg and input rendering ──
         var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head" || (state.user.role && state.user.role.endsWith("_head")));
-        var isADColumn = (col3 === "AD" && r >= 9);
+        var _helpCol3  = helpDropdown.col || "AD";
+        var isADColumn = (col3 === _helpCol3 && r >= TASK_START_ROW);
         var isEditable = false;
         if (isADColumn) {
-            // AD editability: frontend rule — editable only when Z < 100%
+            // Help-dropdown editability: editable only when % complete < 100
             var _zInfoAD = cells["Z" + r];
             var _zValAD  = _zInfoAD ? String(_zInfoAD.v || "") : "";
             var _zDoneAD = (_zValAD === "100%" || _zValAD === "100");
@@ -2214,26 +2090,19 @@ function renderExcelMirror(container, data) {
 
         // --- AD COLUMN ---
         if (isADColumn) {
-            var _adInfo       = cells["AD" + r];
+            var _adInfo       = cells[_helpCol3 + r];
             var _adValue      = _adInfo ? String(_adInfo.v || "").trim() : "";
             var _adValueLower = _adValue.toLowerCase();
             var _adColor      = AD_COLORS[_adValueLower];
-            var AD_FG = isDark ? {
-                "engineering": "#f87171", "purchase": "#86efac",
-                "software": "#60a5fa", "project management": "#93c5fd",
-                "manufacturing": "#a3e635", "sales": "#2dd4bf", "client": "#d8b4fe"
-            } : {};
 
             if (_adColor) {
-                // Dept selected (editable or not): always show dept color
                 bgColor = _adColor;
-                tdStyle.push("color:" + (AD_FG[_adValueLower] || "#ffffff"));
+                // Dark mode: use per-dept fg from config; light mode: white
+                tdStyle.push("color:" + (isDark ? (AD_FG_DARK[_adValueLower] || "#ffffff") : "#ffffff"));
             } else if (isEditable) {
-                // Editable + no dept selected: blue to signal user can interact
                 bgColor = isDark ? "#1a3a5a" : "#b8d8ff";
                 tdStyle.push("color:" + (isDark ? "#88ccff" : "#0066cc"));
             } else {
-                // Not editable + no dept: row background
                 bgColor = rowBg;
             }
         }
@@ -2611,7 +2480,7 @@ html += '<colgroup>';
 html += '<col style="width:36px;">';  // # column
 for (var ci0 = 0; ci0 < cols.length; ci0++) {
   var col0 = cols[ci0];  // ✅ ci0 matches
-  if (col0 === "AC" || col0 === "AE") continue;
+  if (isSkippedCol(col0)) continue;
   if (isCollapsedCol(col0)) continue;
   html += '<col style="width:' + getSheetColumnWidth(col0) + ';">';
 }
