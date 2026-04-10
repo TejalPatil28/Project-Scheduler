@@ -129,10 +129,10 @@ def get_project(project_id):
     # Access check — if project is in user's monitoring file they have access
     role = user["role"]
     if role != "admin" and not role.endswith("_head"):
-        if "all_master_projects" not in _master_projects_cache:
-            from excel_db import get_all_monitor_projects
-            _master_projects_cache["all_master_projects"] = get_all_monitor_projects(role)
-        master_list = _master_projects_cache["all_master_projects"]
+        cache_key = f"all_master_projects_{role}"
+        if cache_key not in _master_projects_cache:
+            _master_projects_cache[cache_key] = get_all_monitor_projects(role)
+        master_list = _master_projects_cache[cache_key]
         allowed_ids = {m.get("file_id") for m in master_list}
         if project_id not in allowed_ids:
             return jsonify({"error": "Access denied"}), 403
@@ -231,7 +231,7 @@ def get_sheet_data(project_id):
         else:
             return jsonify({"error": "Project file not found"}), 404
     try:
-        data = get_raw_sheet(fpath)
+        data = get_raw_sheet(fpath, role=role)
         # Inject last_modified from file mtime if get_raw_sheet didn't already
         if not data.get("last_modified"):
             from datetime import datetime as _dt
@@ -655,8 +655,8 @@ def refresh_file_status():
     projects = get_all_monitor_projects(role)
     
     # Map role to department
-    role_to_dept = {"sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG", "pm": "PM", "admin": "SW", "head": "SW"}
-    dept = role_to_dept.get(role, "SW")
+    
+    dept = ROLE_TO_DEPT.get(role, "SW")
     projects_dir = find_schedule_folder(dept)
     
     # Get the correct prefix for this department
@@ -700,20 +700,7 @@ def update_monitor_cell():
     if not col or not row:
         return jsonify({"error": "Column and row required"}), 400
     
-    # Map role to department
-    role_to_dept = {
-    "sw_tl": "SW",
-    "hw_tl": "HW", 
-    "mfg_tl": "MFG",
-    "pm": "PM",
-    "admin": "SW",
-    "head": "SW",
-    "sw_head": "SW",
-    "hw_head": "HW",
-    "mfg_head": "MFG",
-    "pm_head": "PM"
-    }
-    department = role_to_dept.get(role, "SW")
+    department = ROLE_TO_DEPT.get(role, "SW")
     
     # Update monitor cache and queue Excel write
     coord = f"{col}{row}"

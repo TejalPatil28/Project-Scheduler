@@ -76,6 +76,16 @@ DEPT_CONFIG = {
         "tl_col":         "D",
         "timestamp_col":  "BA",
         "data_start_row": 12,
+        "date_rows":      [28, 29, 30, 31, 32, 33],
+        "extra_sections": [],
+        "editable_cols": {"X", "Y", "Z", "AD", "AF"},
+        "task_cols": {
+            "actual_start": "X",
+            "actual_end": "Y",
+            "percent_complete": "Z",
+            "help_required": "AD",
+            "remark": "AF",
+        },
     },
     "HW": {
         "sched_prefix":   "HWESch",
@@ -104,11 +114,39 @@ DEPT_CONFIG = {
         "monitor_prefix": "PL_Monitor",
         "sched_folder":   "PrjSch",
         "monitor_sheet":  "PLMon",
-        "project_id_col": "B",
+        "project_id_col": "E",
+        "file_col":       "B",
         "head_col":       "C",
         "tl_col":         "D",
         "timestamp_col":  "AZ",
         "data_start_row": 12,
+        "date_rows":      list(range(23, 35)),
+        "extra_sections": [
+            {
+                "title": "Panels & Value",
+                "rows": [
+                    {"label": "Balance Panels",  "col": "B", "row": 43},
+                    {"label": "Panel Disp Act",  "col": "B", "row": 44},
+                    {"label": "Estimated VA%",   "col": "B", "format": "percent", "row": 45},
+                    {"label": "Estimated VA",    "col": "B", "row": 46},
+                    {"label": "Estimated SM%",   "col": "B", "format": "percent", "row": 47},
+                    {"label": "Estimated SM",    "col": "B", "row": 48},
+                    {"label": "Actual VA%",      "col": "B", "format": "percent", "actual_col": "C", "row": 49},
+                    {"label": "Actual VA",       "col": "B", "actual_col": "C", "row": 50},
+                    {"label": "Actual SM%",      "col": "B", "format": "percent", "actual_col": "C", "row": 51},
+                    {"label": "Actual SM",       "col": "B", "actual_col": "C", "row": 52},
+                    {"label": "Reason / Remark", "col": "A", "row": 53},
+                ],
+            },
+        ],
+        "editable_cols": {"X", "Y", "Z", "AF"},  # AD is NOT editable for PM
+        "task_cols": {
+            "actual_start": "X",
+            "actual_end": "Y",
+            "percent_complete": "Z",
+            "remark": "AF",
+            # No help_required for PM
+        },
     },
 }
 
@@ -289,7 +327,7 @@ def _read_sheet_cache(project_id, sched_cache=None):
     except Exception:
         return None
 
-def _update_sheet_cache(project_id, updates, sched_cache=None):
+def _update_sheet_cache(project_id, updates, sched_cache=None, role="sw_tl"):
     """
     Apply updates directly to the sheet JSON cache without reading Excel.
     Updates should be in the same format as received from frontend.
@@ -313,13 +351,16 @@ def _update_sheet_cache(project_id, updates, sched_cache=None):
                 row = update['_row']
                 
                 # Map field to column
-                field_to_col = {
-                    'actual_start': 'X',
-                    'actual_end': 'Y',
-                    'percent_complete': 'Z',
-                    'help_required': 'AD',
-                    'remark': 'AF'
-                }
+                # Get department config for column mapping
+                dept = ROLE_TO_DEPT.get(role, "SW")  # Need to pass role to this function
+                cfg = DEPT_CONFIG.get(dept, DEPT_CONFIG["SW"])
+                task_cols = cfg.get("task_cols", {})
+
+                # Build field_to_col from task_cols
+                field_to_col = {}
+                for field, col in task_cols.items():
+                    if field in ["actual_start", "actual_end", "percent_complete", "help_required", "remark"]:
+                        field_to_col[field] = col
                 
                 for field, value in update.items():
                     if field == '_row':
@@ -641,7 +682,7 @@ def get_project_by_id(project_id, role="sw_tl"):
     # Generate the sheet cache first (this is slow but only once)
     try:
         from excel_db import get_raw_sheet
-        sheet_data = get_raw_sheet(fpath, sched_cache=sched_cache)
+        sheet_data = get_raw_sheet(fpath, sched_cache=sched_cache, role=role)
         # Now read from cache
         sheet = _read_sheet_cache(project_id, sched_cache)
         if sheet and sheet.get("project_banner"):
@@ -732,7 +773,7 @@ def get_tasks(project_id, owner_filter=None, role="sw_tl"):
         fpath = os.path.join(projects_dir, project_id + ".xlsx")
         if not os.path.exists(fpath):
             return []
-        sheet = get_raw_sheet(fpath, sched_cache=sched_cache)  # pass correct cache dir
+        sheet = get_raw_sheet(fpath, sched_cache=sched_cache, role=role)  # pass correct cache dir
 
     cells = sheet.get("cells", {})
     tasks = []
@@ -827,7 +868,7 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
 
     # Step 1: Update JSON cache immediately (fast) — returns stamped timestamp
-    now_str = _update_sheet_cache(project_id, updates, sched_cache)
+    now_str = _update_sheet_cache(project_id, updates, sched_cache, role=role)
 
     # Step 2: Prepare monitor updates
     monitor_updates = {}
@@ -843,12 +884,8 @@ def update_tasks_bulk(project_id, updates, role="sw_tl"):
     
     # 2c: Queue monitor Excel write if there are updates
     if monitor_updates:
-        # Map role to department for queue
-        role_to_dept = {
-            "sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG",
-            "pm": "PM", "admin": "SW", "head": "SW"
-        }
-        department = role_to_dept.get(role, "SW")
+        
+        department = ROLE_TO_DEPT.get(role, "SW")
         queue_monitor_excel_write(department, monitor_updates)
 
     # Step 3: Queue Excel write to background thread
@@ -895,29 +932,31 @@ def update_user(username, updates):
 
 
 def get_master_projects(username):
-    """
-    Return the project list for a user from the shared SW_Monitor file.
-    - Admin/Head: all projects unfiltered
-    - SW TL: only projects where their initials appear in col C (SWH HEAD) or col D (SWE NAME)
-    """
     user = get_user_by_username(username)
     if not user:
         return []
 
     short = user.get("short_name", "").strip().upper()
-    role  = user.get("role", "sw_tl")
-
-    # Admin and head see all projects unfiltered
-    if role in ("admin", "head"):
+    role = user.get("role", "sw_tl")
+    
+    # Get department from role
+    department = ROLE_TO_DEPT.get(role, "SW")
+    cfg = DEPT_CONFIG.get(department)
+    
+    # Determine if this role is a head or a tl
+    is_head_role = role.endswith("_head") or role in ("admin", "head")
+    
+    if is_head_role:
         return get_all_monitor_projects(role)
-
-    # SW TL: read all projects from the shared monitor file then filter
+    
+    # For TL roles, filter by tl_col (which is "swe_name" in the returned dict)
     all_projects = get_all_monitor_projects(role)
-    filtered = [
-        m for m in all_projects
-        if m.get("swh_head") == short or m.get("swe_name") == short
-    ]
-    print(f"[get_master_projects] SW TL {short}: {len(filtered)}/{len(all_projects)} projects")
+    # ADD THIS:
+    print(f"[DEBUG] tl_col = {cfg['tl_col']}, short = {short}")
+    for p in all_projects[:5]:  # print first 5 to see what's in them
+        print(f"[DEBUG] project entry: {p}")
+    filtered = [m for m in all_projects if m.get(cfg["tl_col"]) == short]
+    
     return filtered
 
 def get_all_monitor_projects(role="sw_tl"):
@@ -975,8 +1014,8 @@ def get_all_monitor_projects(role="sw_tl"):
                         "file_id": normalized_id,
                         "stale": stale,
                         "file_exists": file_exists,
-                        "swh_head": (swh_head or "").strip().upper(),
-                        "swe_name": (swe_name or "").strip().upper(),
+                        cfg["head_col"]: (swh_head or "").strip().upper(),  # "C" for SW, "C" for PM
+                        cfg["tl_col"]: (swe_name or "").strip().upper(),    # "D" for SW, "D" for PM
                     })
 
             print(f"[Monitor] Loaded {len(results)} projects from JSON cache")
@@ -1152,7 +1191,7 @@ def _resolve_color(color_obj):
     return None
 
 
-def get_raw_sheet(filepath, max_col=32, sched_cache=None):
+def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
     """Read cell values + basic formatting. Uses JSON sidecar cache for speed."""
     from openpyxl.utils import get_column_letter as gcl
 
@@ -1165,6 +1204,15 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     # Load workbook with openpyxl for structure, formatting, and non-formula cells
     wb = openpyxl.load_workbook(filepath, data_only=False)  # Load with formulas
     ws = wb.active
+
+    # Determine department and get config
+    if role:
+        dept = ROLE_TO_DEPT.get(role, "SW")
+    else:
+        dept = detect_dept_from_path(filepath)
+    cfg = DEPT_CONFIG.get(dept, DEPT_CONFIG["SW"])
+    date_rows = cfg.get("date_rows", [28, 29, 30, 31, 32, 33])  # default to SW rows
+
     max_row = ws.max_row
     max_col = min(ws.max_column, max_col)
     cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
@@ -1180,11 +1228,6 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             excel_compiler = None
     else:
         print("PyCel not available, using openpyxl only")
-
-    # DEBUG: Print all columns being sent to frontend
-    print(f"DEBUG: Columns being sent to frontend: {cols}")
-    print(f"DEBUG: Does 'R' in cols? {'R' in cols}")
-    print(f"DEBUG: Column index of R: {cols.index('R') if 'R' in cols else 'NOT FOUND'}")
     
     # ── Merged cells ──────────────────────────────────────────
     merged_map = {}
@@ -1363,14 +1406,6 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
 
             c = {"v": v}
 
-             # DEBUG: Check what's being stored for column R
-            if cell.column_letter == "R" and cell.row >= 9 and cell.row <= 16:
-                print(f"DEBUG STORE: {coord} stored value: {v}")
-
-            # DEBUG: Check column R
-            if cell.column_letter == "R":
-                print(f"DEBUG: Column R, Row {cell.row}, Value: {v}")
-
             # Merge spans
             if mi.get("master"):
                 if mi["rowspan"] > 1: c["rowspan"] = mi["rowspan"]
@@ -1405,7 +1440,7 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     # Read the fill fingerprint from cell X at TASK_START_ROW — that is the
     # reference editable cell. Any cell in EDITABLE_COLS with the same
     # theme+tint in the data rows is marked editable.
-    EDITABLE_COLS  = {"X", "Y", "Z", "AD", "AF"}
+    EDITABLE_COLS = cfg.get("editable_cols", {"X", "Y", "Z", "AD", "AF"})
     TINT_TOLERANCE = 0.001
     editable_fill  = None
     editable_theme = None
@@ -1561,6 +1596,20 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
     print("==================================")
 
     # Vertical left panel data
+    # Build dates array dynamically from DEPT_CONFIG
+    dates_list = []
+    for row_num in date_rows:
+        dates_list.append({
+            "label": _v(f"B{row_num}") or f"B{row_num}",
+            "pm": _date(f"C{row_num}"),
+            "swe": _date(f"D{row_num}"),
+            "pm_fill": _resolve_color(ws[f"C{row_num}"].fill.fgColor) if ws[f"C{row_num}"].fill.patternType not in (None, "none") else None,
+            "pm_font": _resolve_color(ws[f"C{row_num}"].font.color),
+            "swe_fill": _resolve_color(ws[f"D{row_num}"].fill.fgColor) if ws[f"D{row_num}"].fill.patternType not in (None, "none") else None,
+            "swe_font": _resolve_color(ws[f"D{row_num}"].font.color),
+        })
+
+    # Vertical left panel data
     left_panel = {
         "project_info": [
             {"label": _v("C9")  or "PO Value",      "value": str(_v("D9") or "")},
@@ -1571,14 +1620,8 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             {"label": _v("C14") or "Section",       "value": _v("D14")},
             {"label": _v("C17") or "SW Efforts",    "value": str(_v("D17") or "")},
         ],
-        "dates": [
-            {"label": _v("B28") or "B28", "pm": _date("C28"), "swe": _date("D28"), "pm_fill": _resolve_color(ws["C28"].fill.fgColor) if ws["C28"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C28"].font.color), "swe_fill": _resolve_color(ws["D28"].fill.fgColor) if ws["D28"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D28"].font.color)},
-            {"label": _v("B29") or "B29", "pm": _date("C29"), "swe": _date("D29"), "pm_fill": _resolve_color(ws["C29"].fill.fgColor) if ws["C29"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C29"].font.color), "swe_fill": _resolve_color(ws["D29"].fill.fgColor) if ws["D29"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D29"].font.color)},
-            {"label": _v("B30") or "B30", "pm": _date("C30"), "swe": _date("D30"), "pm_fill": _resolve_color(ws["C30"].fill.fgColor) if ws["C30"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C30"].font.color), "swe_fill": _resolve_color(ws["D30"].fill.fgColor) if ws["D30"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D30"].font.color)},
-            {"label": _v("B31") or "B31", "pm": _date("C31"), "swe": _date("D31"), "pm_fill": _resolve_color(ws["C31"].fill.fgColor) if ws["C31"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C31"].font.color), "swe_fill": _resolve_color(ws["D31"].fill.fgColor) if ws["D31"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D31"].font.color)},
-            {"label": _v("B32") or "B32", "pm": _date("C32"), "swe": _date("D32"), "pm_fill": _resolve_color(ws["C32"].fill.fgColor) if ws["C32"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C32"].font.color), "swe_fill": _resolve_color(ws["D32"].fill.fgColor) if ws["D32"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D32"].font.color)},
-            {"label": _v("B33") or "B33", "pm": _date("C33"), "swe": _date("D33"), "pm_fill": _resolve_color(ws["C33"].fill.fgColor) if ws["C33"].fill.patternType not in (None,"none") else None, "pm_font": _resolve_color(ws["C33"].font.color), "swe_fill": _resolve_color(ws["D33"].fill.fgColor) if ws["D33"].fill.patternType not in (None,"none") else None, "swe_font": _resolve_color(ws["D33"].font.color)},
-        ],
+        "dates": dates_list,
+
         "warranty": [
             {"label": _v("AE6") or "Warranty", "value": _v("AF6")},
         ],
@@ -1593,6 +1636,55 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None):
             {"label": _v("B43") or "A/C",    "value": _v("C43")},
         ],
     }
+    # Build extra_sections from config
+    extra_sections_list = []
+    for section in cfg.get("extra_sections", []):
+        section_data = {
+            "title": section.get("title", ""),
+            "rows": []
+        }
+        for row_cfg in section.get("rows", []):
+            row_num = row_cfg.get("row")
+            col = row_cfg.get("col")
+            if not row_num or not col:
+                continue
+            
+            coord = f"{col}{row_num}"
+            value = cells.get(coord, {}).get("v") if coord in cells else None
+            
+            row_data = {
+                "label": row_cfg.get("label", ""),
+                "value": str(value) if value is not None else "",
+            }
+            
+            # Handle format
+            if row_cfg.get("format") == "percent" and value is not None:
+                try:
+                    num = float(value)
+                    if 0 <= num <= 1:
+                        row_data["value"] = f"{int(num * 100)}%"
+                except (ValueError, TypeError):
+                    pass
+            
+            # Handle actual_col for estimated vs actual
+            if "actual_col" in row_cfg:
+                actual_coord = f"{row_cfg['actual_col']}{row_num}"
+                actual_value = cells.get(actual_coord, {}).get("v") if actual_coord in cells else None
+                row_data["actual"] = str(actual_value) if actual_value is not None else ""
+                if row_cfg.get("format") == "percent" and actual_value is not None:
+                    try:
+                        num = float(actual_value)
+                        if 0 <= num <= 1:
+                            row_data["actual"] = f"{int(num * 100)}%"
+                    except (ValueError, TypeError):
+                        pass
+            
+            section_data["rows"].append(row_data)
+        
+        if section_data["rows"]:
+            extra_sections_list.append(section_data)
+
+    left_panel["extra_sections"] = extra_sections_list
 
     # Determine last_modified:
     # Prefer the JSON sidecar mtime — it reflects the last app-side edit and is
@@ -2113,11 +2205,7 @@ def read_sysmemory_json(project_id, role="sw_tl"):
     import json
     import os
     
-    role_to_dept = {
-        "sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG",
-        "pm": "PM", "admin": "SW", "head": "SW"
-    }
-    department = role_to_dept.get(role, "SW")
+    department = ROLE_TO_DEPT.get(role, "SW")
     
     # Hardcoded column letters
     TASK_NAME_COL = "I"
@@ -2213,12 +2301,7 @@ def load_user_overdue_status(user):
     # Get discipline directories
     projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
     
-    # Map role to department
-    role_to_dept = {
-        "sw_tl": "SW", "hw_tl": "HW", "mfg_tl": "MFG",
-        "pm": "PM", "admin": "SW", "head": "SW"
-    }
-    department = role_to_dept.get(role, "SW")
+    department = ROLE_TO_DEPT.get(role, "SW")
     
     for project in projects:
         project_id = project.get("file_id") or project.get("id")
