@@ -18,7 +18,7 @@ from excel_db import (
     get_discipline_dirs,
     OWNER_MAP,
     update_monitor_cell,
-    ROLE_TO_DEPT,        # ← add this
+    ROLE_TO_DEPT,      
     OWNER_MAP,
     update_monitor_timestamp,
     load_user_overdue_status,
@@ -193,11 +193,14 @@ def save_tasks(project_id):
     from excel_db import _read_sheet_cache, get_discipline_dirs
     _, _, sched_cache, _ = get_discipline_dirs(role)
     fresh = _read_sheet_cache(project_id, sched_cache)
+
+    sheet_cache_key = f"{role}:{project_id}" 
+
     if fresh:
-        _sheet_cache[project_id] = fresh
-    elif project_id in _sheet_cache:
+        _sheet_cache[sheet_cache_key] = fresh
+    elif sheet_cache_key in _sheet_cache:
         if now_str:
-            _sheet_cache[project_id]["last_modified"] = now_str
+            _sheet_cache[sheet_cache_key]["last_modified"] = now_str
 
     return jsonify({"message": msg, "last_modified": now_str})
 
@@ -215,7 +218,7 @@ def get_sheet_data(project_id):
 
     # Check in-memory cache first (fastest)
     if sheet_cache_key in _sheet_cache:
-        data = _sheet_cache[project_id]
+        data = _sheet_cache[sheet_cache_key]
         if is_readonly:
             # Return a copy with editable flags stripped — don't mutate the cache
             import copy

@@ -1413,7 +1413,7 @@ async function loadSheetView() {
 
       return;
     }
-    var data = await API.req("GET", "/projects/" + pid + "/sheet");
+    var data = await API.req("GET", "/projects/" + pid + "/sheet" );
     state.sheetCache[pid] = data;  // cache in browser
     // Update timestamp
     if (data.last_modified) {
@@ -2439,9 +2439,11 @@ async function saveChanges() {
             refreshMonitorData();
     }
 
-    // Invalidate client cache so re-render fetches fresh data from server
-    if (state.project) delete state.sheetCache[state.project.id];
-    renderXLGrid();
+    // Force reload from updated JSON cache
+    if (state.project) {
+        delete state.sheetCache[state.project.id];
+        await loadSheetView();  // This reloads UI from the updated cache
+    }
   } catch(err) {
     toast(err.message || "Save failed", "error");
   } finally {

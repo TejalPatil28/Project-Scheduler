@@ -523,23 +523,23 @@ var SCHEDULE_CONFIGS = {
       // Extra sections below Stake Holders (rows 43–53 in Excel)
       // col references are Excel column letters in the left panel.
       // format: "percent" → multiply raw decimal by 100, append %
-      extraSections: [
-        {
-          title: "Panels & Value",
-          rows: [
-            { label: "Balance Panels",  col: "C"                    },
-            { label: "Panel Disp Act",  col: "C"                    },
-            { label: "Estimated VA%",   col: "C", format: "percent" },
-            { label: "Estimated VA",    col: "C"                    },
-            { label: "Estimated SM%",   col: "C", format: "percent" },
-            { label: "Estimated SM",    col: "C"                    },
-            { label: "Actual VA%",      col: "C", format: "percent", actualCol: "D" },
-            { label: "Actual VA",       col: "C",                    actualCol: "D" },
-            { label: "Actual SM%",      col: "C", format: "percent", actualCol: "D" },
-            { label: "Actual SM",       col: "C",                    actualCol: "D" },
-            { label: "Reason / Remark", col: "B"                    },
-          ],
-        },
+      "extra_sections": [
+          {
+              "title": "Panels & Value",
+              "rows": [
+                  {"label": "Balance Panels",  "col": "C", "row": 43},
+                  {"label": "Panel Disp Act",  "col": "C", "row": 44},
+                  {"label": "Estimated VA%",   "col": "C", "format": "percent", "row": 45},
+                  {"label": "Estimated VA",    "col": "C", "row": 46},
+                  {"label": "Estimated SM%",   "col": "C", "format": "percent", "row": 47},
+                  {"label": "Estimated SM",    "col": "C", "row": 48},
+                  {"label": "Actual VA%",      "col": "C", "format": "percent", "row": 49},
+                  {"label": "Actual VA",       "col": "C", "row": 50},
+                  {"label": "Actual SM%",      "col": "C", "format": "percent", "row": 51},
+                  {"label": "Actual SM",       "col": "C", "row": 52},
+                  {"label": "Reason / Remark", "col": "A", "row": 53},
+              ],
+          },
       ],
     },
 

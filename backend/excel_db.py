@@ -125,17 +125,17 @@ DEPT_CONFIG = {
             {
                 "title": "Panels & Value",
                 "rows": [
-                    {"label": "Balance Panels",  "col": "B", "row": 43},
-                    {"label": "Panel Disp Act",  "col": "B", "row": 44},
-                    {"label": "Estimated VA%",   "col": "B", "format": "percent", "row": 45},
-                    {"label": "Estimated VA",    "col": "B", "row": 46},
-                    {"label": "Estimated SM%",   "col": "B", "format": "percent", "row": 47},
-                    {"label": "Estimated SM",    "col": "B", "row": 48},
-                    {"label": "Actual VA%",      "col": "B", "format": "percent", "actual_col": "C", "row": 49},
-                    {"label": "Actual VA",       "col": "B", "actual_col": "C", "row": 50},
-                    {"label": "Actual SM%",      "col": "B", "format": "percent", "actual_col": "C", "row": 51},
-                    {"label": "Actual SM",       "col": "B", "actual_col": "C", "row": 52},
-                    {"label": "Reason / Remark", "col": "A", "row": 53},
+                    {"label": "Balance Panels",  "col": "C", "row": 43},
+                    {"label": "Panel Disp Act",  "col": "C", "row": 44},
+                    {"label": "Estimated VA%",   "col": "C", "format": "percent", "row": 45},
+                    {"label": "Estimated VA",    "col": "C", "row": 46},
+                    {"label": "Estimated SM%",   "col": "C", "format": "percent", "row": 47},
+                    {"label": "Estimated SM",    "col": "C", "row": 48},
+                    {"label": "Actual VA%",      "col": "C", "format": "percent", "row": 49},
+                    {"label": "Actual VA",       "col": "C", "row": 50},
+                    {"label": "Actual SM%",      "col": "C", "format": "percent", "row": 51},
+                    {"label": "Actual SM",       "col": "C", "row": 52},
+                    {"label": "Reason / Remark", "col": "C", "row": 53},
                 ],
             },
         ],
@@ -1646,14 +1646,17 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
         for row_cfg in section.get("rows", []):
             row_num = row_cfg.get("row")
             col = row_cfg.get("col")
-            if not row_num or not col:
-                continue
             
-            coord = f"{col}{row_num}"
-            value = cells.get(coord, {}).get("v") if coord in cells else None
+            # Read value from column C (where actual data is)
+            value_coord = f"C{row_num}"
+            value = cells.get(value_coord, {}).get("v") if value_coord in cells else None
+            
+            # Read label from column B
+            label_coord = f"B{row_num}"
+            label_from_excel = cells.get(label_coord, {}).get("v") if label_coord in cells else None
             
             row_data = {
-                "label": row_cfg.get("label", ""),
+                "label": label_from_excel or row_cfg.get("label", ""),
                 "value": str(value) if value is not None else "",
             }
             
