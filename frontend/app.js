@@ -1435,9 +1435,6 @@ function renderExcelMirror(container, data) {
   var rowHeights   = data.row_heights;
   var maxRow       = data.max_row;
   var cols         = data.cols;
-  console.log("All columns in grid:", cols);
-  console.log("Does column R exist in cols?", cols.indexOf("R") !== -1);
-  console.log("Index of R:", cols.indexOf("R"));
   var schedCfg  = getScheduleConfig((state.user && state.user.role) || "sw_tl");
   var colGroups = schedCfg ? schedCfg.colGroups : [];
   var editableFill = data.editable_fill || null;
@@ -1456,11 +1453,12 @@ function renderExcelMirror(container, data) {
   var skipColsSet    = {};
   ((schedCfg && schedCfg.skipCols) || ["AC","AE"]).forEach(function(c){ skipColsSet[c] = true; });
 
-  // Help dropdown (AD column equivalent)
-  var helpDropdown  = (schedCfg && schedCfg.helpDropdown) || {};
-  var AD_OPTIONS    = helpDropdown.options || [];
-  var AD_COLORS     = isDark ? (helpDropdown.colorsDark || {}) : (helpDropdown.colorsLight || {});
-  var AD_FG_DARK    = helpDropdown.fgDark || {};
+  // Help dropdown — may be null for depts that have no color-coded help column (e.g. PM)
+  var helpDropdown  = (schedCfg && schedCfg.helpDropdown) || null;
+  var AD_COL        = helpDropdown ? (helpDropdown.col || "AD") : null;
+  var AD_OPTIONS    = helpDropdown ? (helpDropdown.options    || []) : [];
+  var AD_COLORS     = helpDropdown ? (isDark ? (helpDropdown.colorsDark  || {}) : (helpDropdown.colorsLight || {})) : {};
+  var AD_FG_DARK    = helpDropdown ? (helpDropdown.fgDark     || {}) : {};
 
   // Color rules — map from config format to existing internal format
   var _cfgColorRules = (schedCfg && schedCfg.colorRules)
@@ -1474,13 +1472,14 @@ function renderExcelMirror(container, data) {
   var _cfgTextRules = (schedCfg && schedCfg.textRules) || [];
   
   // ── Text rule evaluator (config-driven) ──────────────────────
-  // Rules come from schedCfg.textRules — field names: col, condition, compareWith, rows, color
+  // Supported conditions: not_equal | less_than | value_zero | value_equals | value_less_than
   function getTextRuleColor(col, row, cells) {
     for (var i = 0; i < _cfgTextRules.length; i++) {
       var rule = _cfgTextRules[i];
       if (rule.col !== col) continue;
       if (rule.rows === "9+" && row < 9) continue;
 
+      // Cross-column comparison: cell ≠ compareWith col
       if (rule.condition === "not_equal" && rule.compareWith) {
         var curVal  = cells[rule.col         + row] ? String(cells[rule.col         + row].v || "") : "";
         var cmpVal  = cells[rule.compareWith + row] ? String(cells[rule.compareWith + row].v || "") : "";
@@ -1491,12 +1490,36 @@ function renderExcelMirror(container, data) {
         if (nCur !== nCmp) return rule.color;
       }
 
+      // Cross-column comparison: cell < compareWith col
       if (rule.condition === "less_than" && rule.compareWith) {
         var curVal  = cells[rule.col         + row] ? String(cells[rule.col         + row].v || "") : "";
         var cmpVal  = cells[rule.compareWith + row] ? String(cells[rule.compareWith + row].v || "") : "";
         var numCur  = parseFloat(curVal.replace("%", "").trim());
         var numCmp  = parseFloat(cmpVal.replace("%", "").trim());
         if (!isNaN(numCur) && !isNaN(numCmp) && numCur < numCmp) return rule.color;
+      }
+
+      // Self-value: cell is 0, "0", null, or empty
+      if (rule.condition === "value_zero") {
+        var cellInfo = cells[rule.col + row];
+        var rawVal   = cellInfo ? String(cellInfo.v !== null && cellInfo.v !== undefined ? cellInfo.v : "") : "";
+        var num      = parseFloat(rawVal.trim());
+        if (rawVal.trim() === "" || rawVal.trim() === "0" || (!isNaN(num) && num === 0)) return rule.color;
+      }
+
+      // Self-value: cell === rule.value (string match after trim)
+      if (rule.condition === "value_equals" && rule.value !== undefined) {
+        var cellInfo = cells[rule.col + row];
+        var rawVal   = cellInfo ? String(cellInfo.v !== null && cellInfo.v !== undefined ? cellInfo.v : "") : "";
+        if (rawVal.trim() === String(rule.value).trim()) return rule.color;
+      }
+
+      // Self-value: parseFloat(cell) < rule.value
+      if (rule.condition === "value_less_than" && rule.value !== undefined) {
+        var cellInfo = cells[rule.col + row];
+        var rawVal   = cellInfo ? String(cellInfo.v !== null && cellInfo.v !== undefined ? cellInfo.v : "") : "";
+        var num      = parseFloat(rawVal.replace("%", "").trim());
+        if (!isNaN(num) && num < rule.value) return rule.color;
       }
     }
     return null;
@@ -1544,14 +1567,17 @@ function renderExcelMirror(container, data) {
 
   function renderInputCell(info, coord, col, tdStyle, overrideColor) {
     var curVal = _editPending[coord] !== undefined ? _editPending[coord] : (info.v || "");
-    var inputTextColor = overrideColor || (isDark ? "#d8d8d8" : "#000000");  // contrast-aware
+    var inputTextColor = overrideColor || (isDark ? "#d8d8d8" : "#000000");
     var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;color:" + inputTextColor + ";";
     var input = "";
 
-    // editableCols type from config drives input type
     var _editColCfg = schedCfg && schedCfg.editableCols ? schedCfg.editableCols[col] : null;
     var _colType    = _editColCfg ? _editColCfg.type : null;
-    var _helpCol    = helpDropdown.col || "AD";
+
+    // "readonly" type — show value as plain text, no input widget
+    if (_colType === "readonly") {
+      return h(String(curVal !== null && curVal !== undefined ? curVal : ""));
+    }
 
     if (_colType === "date") {
       var dateVal = curVal ? curVal : "";
@@ -1567,7 +1593,8 @@ function renderExcelMirror(container, data) {
       var _max = (_editColCfg && _editColCfg.max !== undefined) ? _editColCfg.max : 100;
       var numVal = String(curVal || "0").replace("%", "").trim();
       input = "<input type=\"number\" min=\"" + _min + "\" max=\"" + _max + "\" style=\"" + inputStyle + "\" value=\"" + numVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
-    } else if (_colType === "dropdown" || col === _helpCol) {
+    } else if (_colType === "dropdown") {
+      // dropdown options come from helpDropdown (only valid when helpDropdown is non-null)
       var opts = AD_OPTIONS.map(function(o) {
         return "<option value=\"" + o + "\"" + (o === curVal ? " selected" : "") + ">" + o + "</option>";
       }).join("");
@@ -1879,6 +1906,23 @@ function renderExcelMirror(container, data) {
         leftPanelHtml += lpRow(item.label, item.value, true);
       });
     }
+    // Extra sections — config-driven (e.g. PM's VA/SM actuals block)
+    // Server sends leftPanel.extra_sections[] matching schedCfg.leftPanel.extraSections
+    var _extraSections = leftPanel.extra_sections || [];
+    _extraSections.forEach(function(section) {
+      if (!section || !section.rows || !section.rows.length) return;
+      var hasAnyValue = section.rows.some(function(row) { return row.value || row.actual; });
+      if (!hasAnyValue) return;
+      leftPanelHtml += lpSectionHeader(section.title || "");
+      section.rows.forEach(function(row) {
+        if (row.actual !== undefined && row.actual !== null && row.actual !== "") {
+          // Two-value row (estimated vs actual) — show as "est → act"
+          leftPanelHtml += lpRow(row.label, (row.value || "—") + " → " + (row.actual || "—"));
+        } else {
+          leftPanelHtml += lpRow(row.label, row.value, row.wrap);
+        }
+      });
+    });
     leftPanelHtml += '</div>'; // end inner
     leftPanelHtml += '</div>'; // end panel
 
@@ -2004,12 +2048,6 @@ function renderExcelMirror(container, data) {
       // Skip Excel header rows 6, 7, 8 — replaced by custom header above
       if (r === 6 || r === 7 || r === 8) continue;
 
-        // ADD THIS DEBUG
-      if (r >= 9 && r <= 16) {
-          console.log("=== Processing Row", r, "===");
-          console.log("Columns for this row:", cols);
-      }
-
       var rh = rowHeights[String(r)] || 20;
       var isComplete = false;
       var zCoord = "Z" + r;
@@ -2026,16 +2064,10 @@ function renderExcelMirror(container, data) {
       html += '<tr style="height:' + rh + 'px;background:' + rowBg + '">';
 
       for (var ci3 = 0; ci3 < cols.length; ci3++) {
-         // ADD THIS DEBUG
-        if (col3 === "R" && r >= 9 && r <= 16) {
-            console.log("Found column R at row", r);
-        }
-
         var col3  = cols[ci3];
 
         if (isSkippedCol(col3)) continue;
 
-        if (col3 === "R") console.log("Column R found at row", r, "value:", cells[col3 + r] ? cells[col3 + r].v : "null");
         var coord = col3 + r;
         var info  = cells[coord];
 
@@ -2057,10 +2089,15 @@ function renderExcelMirror(container, data) {
         ];
         // ── EDITABILITY — computed once, used by both bg and input rendering ──
         var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head" || (state.user.role && state.user.role.endsWith("_head")));
-        var _helpCol3  = helpDropdown.col || "AD";
-        var isADColumn = (col3 === _helpCol3 && r >= TASK_START_ROW);
+        // isADColumn: only fires when dept has a helpDropdown with a designated col
+        var isADColumn = (AD_COL !== null && col3 === AD_COL && r >= TASK_START_ROW);
+        // A col marked "readonly" in editableCols is never editable regardless of server flag
+        var _editColCfgRow = schedCfg && schedCfg.editableCols ? schedCfg.editableCols[col3] : null;
+        var _isConfigReadonly = _editColCfgRow && _editColCfgRow.type === "readonly";
         var isEditable = false;
-        if (isADColumn) {
+        if (_isConfigReadonly) {
+            isEditable = false;
+        } else if (isADColumn) {
             // Help-dropdown editability: editable only when % complete < 100
             var _zInfoAD = cells["Z" + r];
             var _zValAD  = _zInfoAD ? String(_zInfoAD.v || "") : "";
@@ -2088,9 +2125,9 @@ function renderExcelMirror(container, data) {
         var customBg = getCustomBackgroundColor(col3, r);
         var bgColor  = null;
 
-        // --- AD COLUMN ---
+        // --- HELP DROPDOWN COLUMN (e.g. AD in SW) ---
         if (isADColumn) {
-            var _adInfo       = cells[_helpCol3 + r];
+            var _adInfo       = cells[AD_COL + r];
             var _adValue      = _adInfo ? String(_adInfo.v || "").trim() : "";
             var _adValueLower = _adValue.toLowerCase();
             var _adColor      = AD_COLORS[_adValueLower];
@@ -2206,13 +2243,32 @@ function renderExcelMirror(container, data) {
     // Extract row number from coord (e.g. "X12" -> 12)
     var row = parseInt(coord.replace(/[A-Z]+/, ""), 10);
 
-    // Map col to task field
-    var fieldMap = { "X": "actual_start", "Y": "actual_end", "Z": "percent_complete", "AD": "help_required", "AF": "remark" };
+    // Build field map from editableCols config — maps col letter to task field name.
+    // Any col not in this map is silently ignored (won't produce a pending change).
+    // "readonly" cols are excluded — they can never produce a change.
+    var fieldMap = {};
+    if (schedCfg && schedCfg.editableCols) {
+      // Static known mappings — col → server field name
+      var _knownFields = {
+        "X":  "actual_start",
+        "Y":  "actual_end",
+        "Z":  "percent_complete",
+        "AF": "remark",
+      };
+      // Add help-dropdown col if present
+      if (AD_COL) _knownFields[AD_COL] = "help_required";
+
+      Object.keys(schedCfg.editableCols).forEach(function(c) {
+        var cfg = schedCfg.editableCols[c];
+        if (cfg.type !== "readonly" && _knownFields[c]) {
+          fieldMap[c] = _knownFields[c];
+        }
+      });
+    }
+
     var field = fieldMap[col];
     if (!field) return;
 
-    // Find existing pending change for this row or create one
-    // We key task changes by row number
     var taskKey = "__row_" + row;
     if (!state.pendingChanges[taskKey]) {
       state.pendingChanges[taskKey] = { _row: row };
@@ -2227,16 +2283,12 @@ function renderExcelMirror(container, data) {
 
   // Toggle handler
   window.__xlToggleGroup = function(gi) {
-    console.log("[XL] toggle clicked, gi=", gi, "current state=", collapseState[gi]);
     collapseState[gi] = !collapseState[gi];
-    console.log("[XL] new state=", collapseState[gi]);
     var c = document.getElementById(containerId);
-    console.log("[XL] container found?", !!c, "id=", containerId);
-    if (c) { container = c; buildTable(); console.log("[XL] buildTable done"); }
+    if (c) { container = c; buildTable(); }
   };
 
   buildTable();
-  console.log("[XL] initial buildTable done. colGroups=", colGroups.length, "containerId=", containerId);
 }
 
 function onXLPct(input) {
