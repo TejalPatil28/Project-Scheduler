@@ -589,6 +589,16 @@
     var topRow = document.createElement("div");
     topRow.className = "monitor-toprow";
     topRow.appendChild(tabBar);
+    // Add "Add Project" button for PM Head only
+    var role = (user && user.role) || "";
+    if (role === "pm_head") {
+        var addBtn = document.createElement("button");
+        addBtn.className = "btn btn-primary btn-sm";
+        addBtn.style.cssText = "margin-left:auto;margin-right:8px;padding:4px 12px;font-size:12px;";
+        addBtn.innerHTML = '<span style="margin-right:4px;">+</span> Add Project';
+        addBtn.onclick = function() { showAddProjectModal(cells, allRows, config, user, function() { renderMonitor(container, data, user, overdueMap, config); }, container); };
+        topRow.appendChild(addBtn);
+    }
     topRow.appendChild(badge);
 
     var saveBar = document.createElement("div");
@@ -734,6 +744,156 @@
     });
   }
 
+// ── Add Project Modal for PM Head ──────────────────────────────
+function showAddProjectModal(cells, allRows, config, user, refreshCallback, container) {
+    // Remove existing modal if any
+    var existing = document.getElementById("monitor-add-project-modal");
+    if (existing) existing.remove();
+    
+    var modal = document.createElement("div");
+    modal.id = "monitor-add-project-modal";
+    modal.className = "modal-overlay";
+    modal.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:2000;display:flex;align-items:center;justify-content:center;";
+    
+    modal.innerHTML = `
+        <div class="modal" style="max-width:500px;width:90%;background:var(--bg1);border-radius:12px;box-shadow:0 20px 35px rgba(0,0,0,0.3);">
+            <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);">
+                <div class="modal-title" style="font-size:18px;font-weight:700;">Add New Project</div>
+                <button class="btn btn-ghost btn-sm" onclick="closeAddProjectModal()" style="background:none;border:none;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding:20px;">
+                <div id="map-err" class="alert alert-error hidden" style="margin-bottom:15px;"></div>
+                
+                <div class="form-group" style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;font-weight:600;">OR Number *</label>
+                    <input type="text" id="map_or_number" class="form-input" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);" placeholder="e.g. FSL/2425/PNQ/019">
+                </div>
+                
+                <div class="form-group" style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;font-weight:600;">Section *</label>
+                    <input type="text" id="map_section" class="form-input" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);" placeholder="Enter section">
+                </div>
+                
+                <div class="form-group" style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;font-weight:600;">OV in lakhs *</label>
+                    <input type="number" step="0.01" id="map_ov_value" class="form-input" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);" placeholder="0.00">
+                </div>
+                
+                <div class="form-group" style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;font-weight:600;">Assign to (PM Name) *</label>
+                    <select id="map_assign_to" class="form-input" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);">
+                        <option value="">Select PM</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:16px 20px;border-top:1px solid var(--border);">
+                <button class="btn btn-secondary" onclick="closeAddProjectModal()">Cancel</button>
+                <button class="btn btn-primary" id="map-create-btn">Create Project</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Populate PM dropdown from existing tlCol values
+    var pmSelect = document.getElementById("map_assign_to");
+    if (pmSelect && allRows) {
+        var pmValues = {};
+        allRows.forEach(function(row) {
+            var pm = cv(cells, config.tlCol, row).trim();
+            if (pm && !pmValues[pm]) {
+                pmValues[pm] = true;
+                var option = document.createElement("option");
+                option.value = pm;
+                option.textContent = pm;
+                pmSelect.appendChild(option);
+            }
+        });
+    }
+    
+    // Bind create button event
+    document.getElementById("map-create-btn").onclick = function() {
+        createProjectFromMonitor(config, refreshCallback);
+    };
+}
+
+// Close modal function
+window.closeAddProjectModal = function() {
+    var modal = document.getElementById("monitor-add-project-modal");
+    if (modal) modal.remove();
+};
+
+// Create project from monitor
+async function createProjectFromMonitor(config, refreshCallback) {
+    var btn = document.getElementById("map-create-btn");
+    var errEl = document.getElementById("map-err");
+    var orNumber = document.getElementById("map_or_number").value.trim();
+    var section = document.getElementById("map_section").value;
+    var ovValue = document.getElementById("map_ov_value").value;
+    var assignTo = document.getElementById("map_assign_to").value;
+    
+    // Validation
+    if (!orNumber) {
+        errEl.textContent = "OR Number is required";
+        errEl.classList.remove("hidden");
+        return;
+    }
+    if (!section) {
+        errEl.textContent = "Section is required";
+        errEl.classList.remove("hidden");
+        return;
+    }
+    if (!ovValue) {
+        errEl.textContent = "OV value is required";
+        errEl.classList.remove("hidden");
+        return;
+    }
+    if (!assignTo) {
+        errEl.textContent = "Please select a PM to assign";
+        errEl.classList.remove("hidden");
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px"></span> Creating...';
+    errEl.classList.add("hidden");
+    
+    try {
+        var result = await fetch("/api/monitor/create-project", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+                or_number: orNumber,
+                section: section,
+                ov_value: ovValue,
+                assign_to: assignTo
+            })
+        });
+        
+        var data = await result.json();
+        
+        if (!result.ok) {
+            throw new Error(data.error || "Creation failed");
+        }
+        
+        closeAddProjectModal();
+        
+        if (typeof window.toast === "function") {
+            window.toast("Project created successfully!");
+        }
+        
+        // Refresh the monitor view
+        if (refreshCallback) refreshCallback();
+        
+    } catch(err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+        btn.innerHTML = "Create Project";
+    }
+}
+  
   // ── Exports ───────────────────────────────────────────────────
   global.renderMonitor      = renderMonitor;
   global.refreshMonitorData = refreshMonitorData;

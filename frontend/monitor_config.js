@@ -343,10 +343,14 @@ var MONITOR_CONFIGS = {
     editableCols: {
       "C":  { type: "tl_dropdown", role: "pm_head" },   // PM Head assignment
       "D":  { type: "tl_dropdown", role: "pm"      },   // PM Name assignment
-      "S":  { type: "date",        role: "pm"       },   // Planned Dispatch Date
       "AQ": { type: "dropdown",    role: "pm",  options: ["", "RUN", "HOLD", "CLOSED"] },
       "AR": { type: "date",        role: "pm"       },   // Hold Review Date
       "AS": { type: "text",        role: "pm"       },   // Project Remarks
+      "I": { type: "text",        role: "pm"       },   // Customer name
+      "K": { type: "text",        role: "pm"       },   // OV in lacks
+      "L": { type: "date",        role: "pm"       },   // PO date
+      "M": { type: "date",        role: "pm"       },   // PO delivery date 
+      "AG": { type: "date",        role: "pm"      },   // project seen date
     },
 
     // ── Milestone columns ─────────────────────────────────────
@@ -377,11 +381,11 @@ var MONITOR_CONFIGS = {
         { cols: ["M","L","R"],                      bg: "#1f2a2a" },
       ],
       light: [
-        { cols: ["M","K","U","V","W","X","Y","F","R","O","P","Q","S","T",
+        { cols: ["N","E","U","V","W","X","Y","F","J","R","O","P","Q","S","T",
                  "AH","AI","AJ","AK","AL","AM","AN","AO","AP",
-                 "Z","AA","AB","AC","AD","AE","AF","AG","AZ"],  bg: "#747070" },
-        { cols: ["E","N","I","J","C","D","AS","AQ","AR"],       bg: "#90b4df" },
-        { cols: ["G"],                                           bg: "#191616" },
+                 "Z","AA","AB","AC","AD","AE","AF","AR","AZ"],  bg: "#747070" },
+        { cols: ["L", "M","K", "G", "H", "I","C","D","AS","AQ","AG"],       bg: "#90b4df" },
+        { cols: [],                                           bg: "#191616" },
       ],
     },
 
@@ -393,10 +397,10 @@ var MONITOR_CONFIGS = {
         { cols: ["K"],  color: "#ffcc66" },
       ],
       light: [
-        { cols: ["F","G","R","O","P","Q","S","T","U","V","W","X","Y",
-                 "Z","AA","AB","AC","AD","AE","AF","AG",
-                 "AH","AI","AJ","AK","AL","AM","AN","AO","AP","AZ"],  color: "#ffba26" },
-        { cols: ["K","I"],                                              color: "#ffffff" },
+        { cols: ["E", "J", "N", "F","R","O","P","Q","S","T","U","V","W","X","Y",
+                 "Z","AA","AB","AC","AD","AE","AF",
+                 "AH","AI","AJ","AK","AL","AM","AN","AO","AP","AZ","AR"],  color: "#ffba26" },
+        { cols: [],                                              color: "#ffffff" },
       ],
     },
 

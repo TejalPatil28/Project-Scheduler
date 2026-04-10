@@ -9,6 +9,7 @@ from excel_db import (
     get_all_monitor_projects,
     get_projects_for_user,
     get_project_by_id,
+    create_new_project_from_monitor,
     get_tasks,
     update_tasks_bulk,
     create_user,
@@ -412,6 +413,28 @@ def clear_monitor_cache():
     return jsonify({"message": "Monitor cache cleared successfully"})
 
 # __NEW PROJECT CREATION LOGIC__________________________________
+
+@app.route('/api/monitor/create-project', methods=['POST'])
+def create_project_from_monitor():
+    """Create new project from monitor UI (PM Head only)"""
+    user = get_current_user()
+    if not user or user.get('role') != 'pm_head':
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.json
+    or_number = data.get('or_number')
+    section = data.get('section')
+    ov_value = data.get('ov_value')
+    assign_to = data.get('assign_to')
+    
+    if not all([or_number, section, ov_value, assign_to]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    # Call excel_db function to create project
+    from excel_db import create_new_project_from_monitor
+    result = create_new_project_from_monitor(or_number, section, ov_value, assign_to, user)
+    
+    return jsonify(result)
 
 @app.route("/api/projects/create", methods=["POST"])
 @login_required

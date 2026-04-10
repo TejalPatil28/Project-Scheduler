@@ -2869,3 +2869,76 @@ def update_monitor_task_percentages(project_id, role="sw_tl"):
         import traceback
         traceback.print_exc()
         return {}
+
+def create_new_project_from_monitor(or_number, section, ov_value, assign_to, user):
+    """Create new project from monitor UI"""
+    import json
+    import os
+    import shutil
+    from datetime import datetime
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter as gcl
+    
+    department = "PM"
+    cfg = DEPT_CONFIG[department]
+    
+    # Generate file name: PrjSch_{OR_number}_{section}.xlsx
+    file_name = f"PrjSch_{or_number.replace('/', '_')}_{section}.xlsx"
+    projects_dir, _, _, _ = get_discipline_dirs("pm_head")
+    file_path = os.path.join(projects_dir, file_name)
+    
+    # Check if file already exists
+    if os.path.exists(file_path):
+        return {'error': f'Project file already exists: {file_name}'}
+    
+    # Copy template file
+    template_folder = os.path.join(DATA_DIR, "Template")
+    template_files = [f for f in os.listdir(template_folder) if f.startswith("PrjSch_Template") and f.endswith(".xlsx")]
+
+    if not template_files:
+        return {'error': 'No PM template found in Template folder'}
+
+    template_path = os.path.join(template_folder, template_files[0])
+    shutil.copy2(template_path, file_path)
+    
+    # Write to schedule Excel cells
+    wb = load_workbook(file_path)
+    ws = wb.active
+    ws['D1'] = or_number
+    ws['D14'] = section
+    ws['D9'] = float(ov_value)
+    wb.save(file_path)
+    
+    # Append new row to monitor JSON
+    monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
+    
+    if os.path.exists(monitor_cache_path):
+        with open(monitor_cache_path, 'r') as f:
+            monitor_data = json.load(f)
+        
+        cells = monitor_data.get('cells', {})
+        
+        # Find next available row
+        max_row = monitor_data.get('max_row', cfg['data_start_row'])
+        new_row = max_row + 1
+        
+        # Set values for new row
+        cells[f"{cfg['file_col']}{new_row}"] = {'v': file_name.replace('.xlsx', '')}  # Column B
+        cells[f"{cfg['head_col']}{new_row}"] = {'v': assign_to.upper()}  # Column C
+        cells[f"G{new_row}"] = {'v': or_number}  # Column G = original OR number
+        cells[f"H{new_row}"] = {'v': section}  # Column H = section
+
+        # Column E = normalized: replace / with _ and append _section
+        normalized = or_number + "_" + section
+        cells[f"E{new_row}"] = {'v': normalized}
+
+        cells[f"K{new_row}"] = {'v': float(ov_value)}  # Column K = OV Value
+        
+        # Update max_row
+        monitor_data['max_row'] = new_row
+        
+        # Write back
+        with open(monitor_cache_path, 'w') as f:
+            json.dump(monitor_data, f, indent=2)
+    
+    return {'success': True, 'file_name': file_name, 'project_id': file_name.replace('.xlsx', '')}
