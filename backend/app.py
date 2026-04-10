@@ -6,6 +6,7 @@ from datetime import datetime, date
 from excel_db import (
     get_all_users,
     get_user_by_username,
+    get_all_monitor_projects,
     get_projects_for_user,
     get_project_by_id,
     get_tasks,
@@ -209,8 +210,11 @@ def get_sheet_data(project_id):
     role = user["role"]
     is_readonly = role in ("admin", "head")
 
+    # NEW: role-aware in-memory key
+    sheet_cache_key = f"{role}:{project_id}"
+
     # Check in-memory cache first (fastest)
-    if project_id in _sheet_cache:
+    if sheet_cache_key in _sheet_cache:
         data = _sheet_cache[project_id]
         if is_readonly:
             # Return a copy with editable flags stripped — don't mutate the cache
@@ -220,8 +224,8 @@ def get_sheet_data(project_id):
                 cell.pop("editable", None)
         return jsonify(data)
 
-    # Get the correct projects directory for this user's role
-    projects_dir, _, _, _ = get_discipline_dirs(role)
+    # CHANGED: capture sched_cache too
+    projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
     
     fpath = os.path.join(projects_dir, project_id + ".xlsx")
     if not os.path.exists(fpath):
@@ -231,7 +235,7 @@ def get_sheet_data(project_id):
         else:
             return jsonify({"error": "Project file not found"}), 404
     try:
-        data = get_raw_sheet(fpath, role=role)
+        data = get_raw_sheet(fpath, role=role, sched_cache=sched_cache)
         # Inject last_modified from file mtime if get_raw_sheet didn't already
         if not data.get("last_modified"):
             from datetime import datetime as _dt
@@ -240,7 +244,7 @@ def get_sheet_data(project_id):
                 data["last_modified"] = _dt.fromtimestamp(ts).strftime("%d %b %Y, %I:%M %p")
             except Exception:
                 data["last_modified"] = None
-        _sheet_cache[project_id] = data  # store in memory
+        _sheet_cache[sheet_cache_key] = data  # store in memory
         if is_readonly:
             import copy
             data = copy.deepcopy(data)
