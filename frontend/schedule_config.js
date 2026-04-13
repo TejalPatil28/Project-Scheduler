@@ -174,7 +174,7 @@ var SCHEDULE_CONFIGS = {
 
     // ── Collapsible column groups ─────────────────────────────
     colGroups: [
-      { key: "planning_dates", label: "Planning Dates", cols: ["J","K","L","M","N","O","P","Q","R"] },
+      { key: "planning_dates", label: "Planning Dates", cols: ["J","K","L","M","N","O","P","Q","R","S","T"] },
     ],
 
     // ── Custom header row definitions ─────────────────────────

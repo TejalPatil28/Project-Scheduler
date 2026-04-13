@@ -498,16 +498,6 @@ function renderMasterList(masterList, projects) {
   window._masterListFull = masterList || [];
   window._projectsFull = projects || [];
 
-  // Check if user is PM (Project Manager) or pm_head
-  var user = state.user || {};
-  var canCreateProject = (user.role === "pm" || user.role === "pm_head");
-  
-  var createButtonHtml = canCreateProject ? 
-    '<div style="padding: 8px 10px; border-bottom: 1px solid var(--border);">' +
-      '<button id="create-new-project-btn" class="btn btn-primary btn-sm" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">' +
-        '<span>+</span> New Project' +
-      '</button>' +
-    '</div>' : '';
 
   // Build search input HTML (NO REFRESH BUTTON HERE - it's already in sidebar header)
   var searchHtml = [
@@ -520,7 +510,6 @@ function renderMasterList(masterList, projects) {
   if (!masterList || masterList.length === 0) {
     el.innerHTML = [
       searchHtml,
-      createButtonHtml,
       '<div class="master-empty" style="padding: 20px; text-align: center; color: var(--text3);">No projects found</div>',
       '<div id="master-list-items" class="master-pane-list"></div>'
     ].join("");
@@ -533,13 +522,6 @@ function renderMasterList(masterList, projects) {
       });
     }
     
-    // Bind create new project button event
-    var createBtn = document.getElementById("create-new-project-btn");
-    if (createBtn) {
-      createBtn.addEventListener("click", function() {
-        showNewProjectModal();
-      });
-    }
     
     return;
   }
@@ -547,7 +529,6 @@ function renderMasterList(masterList, projects) {
   // If projects exist, show full list with button
   var html = [
     searchHtml,
-    createButtonHtml,
     '<div id="master-list-items" class="master-pane-list"></div>'
   ].join("");
 
@@ -561,318 +542,12 @@ function renderMasterList(masterList, projects) {
     });
   }
   
-  // Bind create new project button event
-  var createBtn = document.getElementById("create-new-project-btn");
-  if (createBtn) {
-    createBtn.addEventListener("click", function() {
-      showNewProjectModal();
-    });
-  }
 
   // Render the actual project items
   filterMasterList("");
 }
 
-function showNewProjectModal() {
-  var existing = document.getElementById("new-project-modal-overlay");
-  if (existing) existing.remove();
-  
-  var modal = document.createElement("div");
-  modal.id = "new-project-modal-overlay";
-  modal.className = "modal-overlay";
-  modal.innerHTML = `
-    <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
-      <div class="modal-header">
-        <div class="modal-title">Create New Project</div>
-        <button class="btn btn-ghost btn-sm" onclick="closeNewProjectModal()">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div id="np-err" class="alert alert-error hidden"></div>
-        
-        <!-- Header Section -->
-        <div class="form-section-title">Project Header</div>
-        <div class="form-row">
-          <div class="form-group"><label>OR No.</label><input class="form-input" id="np_or_number" placeholder="OR No."></div>
-          <div class="form-group"><label>Master OR</label><input class="form-input" id="np_master_or" placeholder="Master OR"></div>
-          <div class="form-group"><label>Client PO#</label><input class="form-input" id="np_client_po" placeholder="Client PO#"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Quote Number</label><input class="form-input" id="np_quote_number" placeholder="Quote Number"></div>
-          <div class="form-group"><label>Sales Engineer</label><input class="form-input" id="np_sales_engineer" placeholder="Sales Engineer"></div>
-          <div class="form-group"><label>Sales Manager</label><input class="form-input" id="np_sales_manager" placeholder="Sales Manager"></div>
-        </div>
-        
-        <!-- Project Details -->
-        <div class="form-section-title">Project Details</div>
-        <div class="form-row">
-          <div class="form-group"><label>PO Value (in lacs)</label><input class="form-input" id="np_po_value" type="number" step="0.01" placeholder="0.00"></div>
-          <div class="form-group"><label>Customer Name</label><input class="form-input" id="np_customer_name" placeholder="Customer Name"></div>
-          <div class="form-group"><label>End Customer</label><input class="form-input" id="np_end_customer" placeholder="End Customer"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Consultant</label><input class="form-input" id="np_consultant" placeholder="Consultant"></div>
-          <div class="form-group"><label>Project Description</label><input class="form-input" id="np_project_desc" placeholder="Project Description"></div>
-          <div class="form-group"><label>Section</label><input class="form-input" id="np_section" placeholder="Section"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Mfg Location</label>
-            <select class="form-input" id="np_mfg_loc">
-              <option value="GON">GON</option>
-              <option value="DUB">DUB</option>
-            </select>
-          </div>
-        </div>
-        
-        <!-- Efforts -->
-        <div class="form-section-title">Efforts</div>
-        <div class="form-row">
-          <div class="form-group"><label>HW Efforts</label><input class="form-input" id="np_hw_efforts" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Std Panels</label><input class="form-input" id="np_std_panels" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Act Panels</label><input class="form-input" id="np_act_panels" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>SW Efforts</label><input class="form-input" id="np_sw_efforts" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Mfg Efforts</label><input class="form-input" id="np_mfg_efforts" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        
-        <!-- Actual Efforts -->
-        <div class="form-section-title">Actual Efforts</div>
-        <div class="form-row">
-          <div class="form-group"><label>Actual HW Efforts</label><input class="form-input" id="np_actual_hw_efforts" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Actual SW Efforts</label><input class="form-input" id="np_actual_sw_efforts" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Actual Mfg Efforts</label><input class="form-input" id="np_actual_mfg_efforts" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        
-        <!-- Dates -->
-        <div class="form-section-title">Dates</div>
-        <div class="form-row">
-          <div class="form-group"><label>PO Date</label><input class="form-input" id="np_po_date" type="date"></div>
-          <div class="form-group"><label>OPF Recpt</label><input class="form-input" id="np_opf_recpt" type="date"></div>
-          <div class="form-group"><label>HW Input</label><input class="form-input" id="np_hw_input" type="date"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Dwg. Sub.</label><input class="form-input" id="np_dwg_sub" type="date"></div>
-          <div class="form-group"><label>Dwg Appr</label><input class="form-input" id="np_dwg_appr" type="date"></div>
-          <div class="form-group"><label>HW FAT</label><input class="form-input" id="np_hw_fat" type="date"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Dispatch</label><input class="form-input" id="np_dispatch" type="date"></div>
-          <div class="form-group"><label>SW Input</label><input class="form-input" id="np_sw_input" type="date"></div>
-          <div class="form-group"><label>SW FAT</label><input class="form-input" id="np_sw_fat" type="date"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Install</label><input class="form-input" id="np_install" type="date"></div>
-          <div class="form-group"><label>PreComm.</label><input class="form-input" id="np_precomm" type="date"></div>
-          <div class="form-group"><label>Comm.</label><input class="form-input" id="np_comm" type="date"></div>
-        </div>
-        
-        <!-- Stakeholders -->
-        <div class="form-section-title">Stakeholders</div>
-        <div class="form-row">
-          <div class="form-group"><label>Sales</label><input class="form-input" id="np_sh_sales" placeholder="Sales"></div>
-          <div class="form-group"><label>HW</label><input class="form-input" id="np_sh_hw" placeholder="HW"></div>
-          <div class="form-group"><label>SW</label><input class="form-input" id="np_sh_sw" placeholder="SW"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>BYR</label><input class="form-input" id="np_sh_byr" placeholder="BYR"></div>
-          <div class="form-group"><label>MFG</label><input class="form-input" id="np_sh_mfg" placeholder="MFG"></div>
-          <div class="form-group"><label>E&C</label><input class="form-input" id="np_sh_ec" placeholder="E&C"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>A/C</label><input class="form-input" id="np_sh_ac" placeholder="A/C"></div>
-        </div>
-        
-        <!-- Scope Selection (YES/NO) -->
-        <div class="form-section-title">Scope (Departments Involved)</div>
-        <div class="form-row">
-          <div class="form-group"><label>HW Scope</label>
-            <select class="form-input" id="np_scope_hw"><option value="NO">NO</option><option value="YES">YES</option></select>
-          </div>
-          <div class="form-group"><label>SW Scope</label>
-            <select class="form-input" id="np_scope_sw"><option value="NO">NO</option><option value="YES">YES</option></select>
-          </div>
-          <div class="form-group"><label>MFG Scope</label>
-            <select class="form-input" id="np_scope_mfg"><option value="NO">NO</option><option value="YES">YES</option></select>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>INST Scope</label>
-            <select class="form-input" id="np_scope_inst"><option value="NO">NO</option><option value="YES">YES</option></select>
-          </div>
-          <div class="form-group"><label>COM Scope</label>
-            <select class="form-input" id="np_scope_com"><option value="NO">NO</option><option value="YES">YES</option></select>
-          </div>
-        </div>
-        
-        <!-- LD Fields -->
-        <div class="form-section-title">LD Details</div>
-        <div class="form-row">
-          <div class="form-group"><label>LD Date</label><input class="form-input" id="np_ld_date" type="date"></div>
-          <div class="form-group"><label>LD max/wk %</label><input class="form-input" id="np_ld_maxwk" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>LD max of OV %</label><input class="form-input" id="np_ld_maxov" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>LD Remarks</label><input class="form-input" id="np_ld_remarks" placeholder="LD Remarks"></div>
-        </div>
-        
-        <!-- Warranty -->
-        <div class="form-section-title">Warranty</div>
-        <div class="form-row">
-          <div class="form-group"><label>Warranty</label><input class="form-input" id="np_warranty" placeholder="Warranty terms"></div>
-        </div>
-        
-        <!-- Actuals -->
-        <div class="form-section-title">Actuals</div>
-        <div class="form-row">
-          <div class="form-group"><label>Balance Panels</label><input class="form-input" id="np_balance_panels" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Panel Disp Act</label><input class="form-input" id="np_panel_disp_act" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Est. VA%</label><input class="form-input" id="np_est_va_pct" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Est. VA</label><input class="form-input" id="np_est_va" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Est. SM%</label><input class="form-input" id="np_est_sm_pct" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Est. SM</label><input class="form-input" id="np_est_sm" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Act. VA%</label><input class="form-input" id="np_act_va_pct" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Act. VA</label><input class="form-input" id="np_act_va" type="number" step="0.01" placeholder="0"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Act. SM%</label><input class="form-input" id="np_act_sm_pct" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Act. SM</label><input class="form-input" id="np_act_sm" type="number" step="0.01" placeholder="0"></div>
-          <div class="form-group"><label>Remark</label><input class="form-input" id="np_reason_remark" placeholder="Remark"></div>
-        </div>
-        
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
-        <button class="btn btn-primary" id="np-create-btn">Create Project</button>
-      </div>
-    </div>
-  `;
-  
-  document.body.appendChild(modal);
-  
-  // Bind create button event
-  document.getElementById("np-create-btn").onclick = function() {
-    createNewProject();
-  };
-}
 
-function closeNewProjectModal() {
-  var modal = document.getElementById("new-project-modal-overlay");
-  if (modal) modal.remove();
-}
-
-function closeNewProjectModal() {
-  var modal = document.getElementById("new-project-modal-overlay");
-  if (modal) modal.remove();
-}
-
-async function createNewProject() {
-  var btn = document.getElementById("np-create-btn");
-  var errEl = document.getElementById("np-err");
-  
-  // Collect all form data
-  var formData = {
-    // Header
-    or_number: document.getElementById("np_or_number").value,
-    master_or: document.getElementById("np_master_or").value,
-    client_po: document.getElementById("np_client_po").value,
-    quote_number: document.getElementById("np_quote_number").value,
-    sales_engineer: document.getElementById("np_sales_engineer").value,
-    sales_manager: document.getElementById("np_sales_manager").value,
-    
-    // Project Details
-    po_value: document.getElementById("np_po_value").value,
-    customer_name: document.getElementById("np_customer_name").value,
-    end_customer: document.getElementById("np_end_customer").value,
-    consultant: document.getElementById("np_consultant").value,
-    project_desc: document.getElementById("np_project_desc").value,
-    section: document.getElementById("np_section").value,
-    mfg_loc: document.getElementById("np_mfg_loc").value,
-    
-    // Efforts
-    hw_efforts: document.getElementById("np_hw_efforts").value,
-    std_panels: document.getElementById("np_std_panels").value,
-    act_panels: document.getElementById("np_act_panels").value,
-    sw_efforts: document.getElementById("np_sw_efforts").value,
-    mfg_efforts: document.getElementById("np_mfg_efforts").value,
-    
-    // Actual Efforts
-    actual_hw_efforts: document.getElementById("np_actual_hw_efforts").value,
-    actual_sw_efforts: document.getElementById("np_actual_sw_efforts").value,
-    actual_mfg_efforts: document.getElementById("np_actual_mfg_efforts").value,
-    
-    // Dates
-    po_date: document.getElementById("np_po_date").value,
-    opf_recpt: document.getElementById("np_opf_recpt").value,
-    hw_input: document.getElementById("np_hw_input").value,
-    dwg_sub: document.getElementById("np_dwg_sub").value,
-    dwg_appr: document.getElementById("np_dwg_appr").value,
-    hw_fat: document.getElementById("np_hw_fat").value,
-    dispatch: document.getElementById("np_dispatch").value,
-    sw_input: document.getElementById("np_sw_input").value,
-    sw_fat: document.getElementById("np_sw_fat").value,
-    install: document.getElementById("np_install").value,
-    precomm: document.getElementById("np_precomm").value,
-    comm: document.getElementById("np_comm").value,
-    
-    // Stakeholders
-    sh_sales: document.getElementById("np_sh_sales").value,
-    sh_hw: document.getElementById("np_sh_hw").value,
-    sh_sw: document.getElementById("np_sh_sw").value,
-    sh_byr: document.getElementById("np_sh_byr").value,
-    sh_mfg: document.getElementById("np_sh_mfg").value,
-    sh_ec: document.getElementById("np_sh_ec").value,
-    sh_ac: document.getElementById("np_sh_ac").value,
-    
-    // Scope
-    scope_hw: document.getElementById("np_scope_hw").value,
-    scope_sw: document.getElementById("np_scope_sw").value,
-    scope_mfg: document.getElementById("np_scope_mfg").value,
-    scope_inst: document.getElementById("np_scope_inst").value,
-    scope_com: document.getElementById("np_scope_com").value,
-    
-    // LD
-    ld_date: document.getElementById("np_ld_date").value,
-    ld_maxwk: document.getElementById("np_ld_maxwk").value,
-    ld_maxov: document.getElementById("np_ld_maxov").value,
-    ld_remarks: document.getElementById("np_ld_remarks").value,
-    
-    // Warranty
-    warranty: document.getElementById("np_warranty").value,
-    
-    // Actuals
-    balance_panels: document.getElementById("np_balance_panels").value,
-    panel_disp_act: document.getElementById("np_panel_disp_act").value,
-    est_va_pct: document.getElementById("np_est_va_pct").value,
-    est_va: document.getElementById("np_est_va").value,
-    est_sm_pct: document.getElementById("np_est_sm_pct").value,
-    est_sm: document.getElementById("np_est_sm").value,
-    act_va_pct: document.getElementById("np_act_va_pct").value,
-    act_va: document.getElementById("np_act_va").value,
-    act_sm_pct: document.getElementById("np_act_sm_pct").value,
-    act_sm: document.getElementById("np_act_sm").value,
-    reason_remark: document.getElementById("np_reason_remark").value,
-  };
-  
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Creating...';
-  errEl.classList.add("hidden");
-  
-  try {
-    var result = await API.req("POST", "/projects/create", formData);
-    closeNewProjectModal();
-    toast("Project created successfully!");
-    refreshMasterList();
-  } catch(err) {
-    errEl.textContent = err.message || "Creation failed";
-    errEl.classList.remove("hidden");
-    btn.disabled = false;
-    btn.innerHTML = "Create Project";
-  }
-}
 
 async function refreshMasterList() {
     toast("Refreshing project list...");
@@ -970,12 +645,20 @@ function renderMasterItems(masterList, projects, container) {
       ? '<div class="master-prog-bar"><div class="master-prog-fill" style="width:' + pct + '%;background:' + (pct >= 80 ? "var(--green)" : pct >= 40 ? "var(--amber)" : "var(--accent)") + '"></div></div>'
       : "";
 
+    // Determine if this is a new project (needs setup)
+    var isNewProject = (m.da_status === "NEW");
+
     var classes = "master-item"
       + (isActive ? " active" : "")
       + (stale    ? " stale"  : "")
-      + (exists   ? ""        : " no-file");
+      + (exists   ? ""        : " no-file")
+      + (isNewProject ? " new-project" : "");
 
-    var itemBg = !exists ? "background:rgba(244,63,94,0.28);border-color:rgba(244,63,94,0.5);" : "";
+    var itemBg = isNewProject
+      ? "background:rgba(59,130,246,0.18);border-color:rgba(59,130,246,0.5);"
+      : !exists
+        ? "background:rgba(244,63,94,0.28);border-color:rgba(244,63,94,0.5);"
+        : "";
 
     var safeId   = h(pid);
     var safeFile = h(m.file_id || "");
@@ -1017,7 +700,16 @@ function onMasterItemClick(pid, exists, fileId) {
       + '</div>';
     return;
   }
-  openProject(fileId || pid);
+  
+  // Find the project in masterList to check da_status
+  var masterProject = window._masterListFull.find(function(m) { return m.file_id === fileId || m.project_id === pid; });
+  
+  // If it's a NEW project (da_status === "NEW"), show setup form
+  if (masterProject && masterProject.da_status === "NEW") {
+    renderSetupForm(fileId || pid);
+  } else {
+    openProject(fileId || pid);
+  }
 }
 
 function setDashTab(tab) {
@@ -1362,6 +1054,667 @@ function renderProjectPage() {
   ].join("");
 
   renderXLGrid();
+}
+
+// ── SETUP FORM RENDERER v2 (for NEW projects) ─────────────────
+// Clean modern form — layout inspired by Excel PrjSch left panel
+// but rendered as a polished UI (not a raw spreadsheet clone).
+// No non-editable display fields. No huge section tag columns.
+// ──────────────────────────────────────────────────────────────
+async function renderSetupForm(projectId) {
+  var page = document.getElementById("page-content");
+  page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading setup form...</div>';
+  setTopbar("Project Setup", true, function () { switchToProjects(); });
+
+  try {
+    var result = await API.req("GET", "/projects/" + projectId + "/setup");
+
+    if (result.already_setup) {
+      openProject(projectId);
+      return;
+    }
+
+    var fields    = result.fields    || {};
+    var taskNames = result.task_names || {};
+
+    // ── Tiny helpers ──────────────────────────────────────────
+    function has(f) { return !!fields[f]; }
+
+    function inp(name, opts) {
+      opts = opts || {};
+      var cfg  = fields[name];
+      if (!cfg) return "";
+      var type = opts.type || cfg.type || "text";
+      var req  = opts.req  ? ' required' : '';
+      var cls  = "sf2-input" + (opts.wide ? " wide" : "");
+
+      if (type === "dropdown") {
+        var os = (cfg.options || []).map(function(o) {
+          return '<option value="' + o + '">' + o + '</option>';
+        }).join("");
+        return '<select name="' + name + '" class="' + cls + '"' + req + '>'
+          + '<option value="">Select…</option>' + os + '</select>';
+      }
+      if (type === "date") {
+        return '<input type="date" name="' + name + '" class="' + cls + '"' + req + '>';
+      }
+      if (type === "number") {
+        return '<input type="number" step="any" name="' + name
+          + '" class="' + cls + '" placeholder="0"' + req + '>';
+      }
+      return '<input type="text" name="' + name + '" class="' + cls + '"' + req + '>';
+    }
+
+    // Field group: label + input in a .sf2-field div
+    function field(label, name, opts) {
+      if (!has(name)) return "";
+      opts = opts || {};
+      var reqMark = opts.req ? '<span class="sf2-req-dot">*</span>' : '';
+      return '<div class="sf2-field' + (opts.cls ? ' ' + opts.cls : '') + '">'
+        + '<label class="sf2-label">' + reqMark + label + '</label>'
+        + inp(name, opts)
+        + '</div>';
+    }
+
+    // Section header — compact pill style
+    function sec(icon, title) {
+      return '<div class="sf2-section-head">'
+        + '<span class="sf2-section-icon">' + icon + '</span>'
+        + '<span class="sf2-section-title">' + title + '</span>'
+        + '</div>';
+    }
+
+    // Row wrapper (2-col or 3-col grid)
+    function row2(a, b)    { return '<div class="sf2-row2">' + a + b + '</div>'; }
+    function row3(a, b, c) { return '<div class="sf2-row3">' + a + b + c + '</div>'; }
+    function row1(a)       { return '<div class="sf2-row1">' + a + '</div>'; }
+
+    // ── CSS ───────────────────────────────────────────────────
+    var css = `<style>
+/* ── Root wrap ── */
+.sf2-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg1);
+  font-family: var(--font-sans, 'Inter', 'Segoe UI', Arial, sans-serif);
+}
+
+/* ── Top bar ── */
+.sf2-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sf2-topbar-left { display: flex; flex-direction: column; gap: 2px; }
+.sf2-topbar-name { font-size: 16px; font-weight: 700; color: var(--text1); letter-spacing: -0.02em; }
+.sf2-topbar-id   { font-size: 11px; color: var(--text3); font-family: var(--font-mono); }
+.sf2-topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+/* ── Scrollable body ── */
+.sf2-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 80px;
+}
+
+/* ── Section header ── */
+.sf2-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 12px;
+  padding-bottom: 7px;
+  border-bottom: 1.5px solid var(--border);
+}
+.sf2-section-head:first-child { margin-top: 0; }
+.sf2-section-icon {
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.sf2-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text2);
+}
+
+/* ── Grid rows ── */
+.sf2-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+  margin-bottom: 10px;
+}
+.sf2-row3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px 20px;
+  margin-bottom: 10px;
+}
+.sf2-row1 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px 20px;
+  margin-bottom: 10px;
+}
+
+/* ── Individual field ── */
+.sf2-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sf2-field.full { grid-column: 1 / -1; }
+
+/* ── Label ── */
+.sf2-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.sf2-req-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* ── Inputs ── */
+.sf2-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--text1);
+  font-family: inherit;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.sf2-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.18);
+}
+select.sf2-input { cursor: pointer; }
+textarea.sf2-input {
+  height: auto;
+  min-height: 60px;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+/* ── Dates subsection: customer | PM layout ── */
+.sf2-dates-grid {
+  display: grid;
+  grid-template-columns: 160px 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.sf2-dg-head {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text3);
+  padding: 5px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.sf2-dg-head.center { text-align: center; }
+.sf2-dg-head.accent-col { background: rgba(59,130,246,0.07); }
+.sf2-dg-lbl {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  padding: 6px 10px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+}
+.sf2-dg-lbl.req::before {
+  content: '';
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.sf2-dg-cell {
+  padding: 4px 6px;
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--bg1);
+  display: flex;
+  align-items: center;
+}
+.sf2-dg-cell:last-child { border-right: none; }
+.sf2-dg-cell.auto-cell {
+  font-size: 10px;
+  color: var(--text3);
+  font-style: italic;
+  justify-content: center;
+  background: var(--bg2);
+}
+.sf2-dg-cell input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text1);
+  padding: 2px 2px;
+}
+.sf2-dg-cell input:focus { background: rgba(59,130,246,0.07); border-radius: 3px; }
+
+/* ── Stakeholders: inline badge-style layout ── */
+.sf2-sh-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* ── Scope checkboxes ── */
+.sf2-scope-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 10px 4px;
+  margin-bottom: 12px;
+}
+.sf2-scope-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text1);
+  cursor: pointer;
+}
+.sf2-scope-item input[type=checkbox] {
+  width: 15px; height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ── Task table ── */
+.sf2-task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.sf2-task-table th {
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text2);
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.sf2-task-table th:not(:first-child) { text-align: center; }
+.sf2-task-table td {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text1);
+}
+.sf2-task-table td:first-child {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text1);
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+}
+.sf2-task-table td input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text1);
+  padding: 4px 4px;
+  text-align: center;
+}
+.sf2-task-table td input:focus { background: rgba(59,130,246,0.08); border-radius: 3px; }
+.sf2-task-table tr:hover td { background: rgba(59,130,246,0.03); }
+.sf2-task-table tr:hover td:first-child { background: var(--bg2); }
+
+/* ── Bottom save bar ── */
+.sf2-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 24px;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+</style>`;
+
+    // ── Build form HTML ───────────────────────────────────────
+    var body = "";
+
+    // ── 1. Header Info ────────────────────────────────────────
+    body += sec("📋", "Header Information");
+    body += row2(
+      field("Master OR",        "master_or",       { req: true }),
+      field("Quote Number",     "quote_number",     { req: true })
+    );
+    body += row2(
+      field("Client PO#",       "client_po"),
+      field("Sales Engineer",   "sales_engineer",  { req: true })
+    );
+    body += row1(
+      field("Sales Manager",    "sales_manager",   { req: true })
+    );
+
+    // ── 2. Project Details ────────────────────────────────────
+    body += sec("🏗", "Project Details");
+    body += row2(
+      field("PO Value (in lacs)", "po_value",      { req: true, type: "number" }),
+      field("Section",            "section",        { req: true, type: "dropdown" })
+    );
+    body += row1(
+      field("Customer Name",    "customer_name",   { req: true })
+    );
+    body += row2(
+      field("End Customer",     "end_customer"),
+      field("Consultant",       "consultant")
+    );
+    body += row1(
+      field("Project Description", "project_desc", { req: true })
+    );
+    body += row1(
+      field("Manufacturing Location", "mfg_loc",  { type: "dropdown" })
+    );
+
+    // ── 3. Efforts ────────────────────────────────────────────
+    body += sec("⚙", "Efforts");
+    body += row3(
+      field("HW Efforts",       "hw_efforts",      { req: true, type: "number" }),
+      field("SW Efforts",       "sw_efforts",      { req: true, type: "number" }),
+      field("Mfg Efforts",      "mfg_efforts",     { req: true, type: "number" })
+    );
+    body += row2(
+      field("No. of Std Panels", "std_panels",     { req: true, type: "number" }),
+      field("No. of Act Panels", "act_panels",     { req: true, type: "number" })
+    );
+
+    // ── 4. Dates — 3-column grid (label | cust date | PM auto) ──
+    body += sec("📅", "Dates");
+    body += '<div class="sf2-dates-grid">';
+    // header row
+    body += '<div class="sf2-dg-head">Milestone</div>';
+    body += '<div class="sf2-dg-head center accent-col">Customer Date</div>';
+    body += '<div class="sf2-dg-head center">PM Date</div>';
+    // date rows
+    var dateList = [
+      ["PO Date",    "po_date",   true],
+      ["OPF Recpt",  "opf_recpt", false],
+      ["HW Input",   "hw_input",  false],
+      ["Dwg. Sub.",  "dwg_sub",   false],
+      ["Dwg Appr",   "dwg_appr",  false],
+      ["HW FAT",     "hw_fat",    false],
+      ["Dispatch",   "dispatch",  false],
+      ["SW Input",   "sw_input",  false],
+      ["SW FAT",     "sw_fat",    false],
+      ["Install",    "install",   false],
+      ["PreComm.",   "precomm",   false],
+      ["Comm.",      "comm",      false],
+    ];
+    dateList.forEach(function(dr) {
+      if (!has(dr[1]) && !dr[2]) return; // skip if not in fields and not required
+      body += '<div class="sf2-dg-lbl' + (dr[2] ? ' req' : '') + '">' + dr[0] + '</div>';
+      body += '<div class="sf2-dg-cell"><input type="date" name="' + dr[1] + '"></div>';
+      body += '<div class="sf2-dg-cell auto-cell">auto</div>';
+    });
+    body += '</div>';
+
+    // ── 5. Stakeholders ───────────────────────────────────────
+    body += sec("👥", "Stakeholders");
+    var shList = [
+      ["Sales", "sh_sales"], ["MFG",   "sh_mfg"],
+      ["HW",    "sh_hw"],    ["E&C",   "sh_ec"],
+      ["SW",    "sh_sw"],    ["A/C",   "sh_ac"],
+      ["BYR",   "sh_byr"],
+    ];
+    body += '<div class="sf2-sh-grid">';
+    shList.forEach(function(sh) {
+      body += field(sh[0], sh[1]);
+    });
+    body += '</div>';
+
+    // ── 6. Actuals ────────────────────────────────────────────
+    body += sec("📊", "Actuals");
+    body += row2(
+      field("Est. VA%",        "est_va_pct",  { type: "number" }),
+      field("Est. VA",         "est_va",      { type: "number" })
+    );
+    body += row2(
+      field("Est. SM%",        "est_sm_pct",  { type: "number" }),
+      field("Est. SM",         "est_sm",      { type: "number" })
+    );
+    body += row2(
+      field("Act. VA%",        "act_va_pct",  { type: "number" }),
+      field("Act. VA",         "act_va",      { type: "number" })
+    );
+    body += row2(
+      field("Act. SM%",        "act_sm_pct",  { type: "number" }),
+      field("Act. SM",         "act_sm",      { type: "number" })
+    );
+    body += row2(
+      field("Balance Panels",  "balance_panels", { type: "number" }),
+      field("Panel Disp Act",  "panel_disp_act", { type: "number" })
+    );
+    body += row1(
+      field("Reason / Remark", "reason_remark")
+    );
+
+    // ── 7. LD Details ─────────────────────────────────────────
+    var hasLD = has("ld_date") || has("ld_maxwk") || has("ld_maxov") || has("ld_remarks");
+    if (hasLD) {
+      body += sec("⚠", "LD Details");
+      body += row2(
+        field("LD Date",      "ld_date",    { type: "date" }),
+        field("LD Max/Wk %",  "ld_maxwk",  { type: "number" })
+      );
+      body += row2(
+        field("LD Max/OV %",  "ld_maxov",  { type: "number" }),
+        field("LD Remarks",   "ld_remarks")
+      );
+    }
+
+    // ── 8. Warranty ───────────────────────────────────────────
+    if (has("warranty")) {
+      body += sec("🛡", "Warranty");
+      body += row1(field("Warranty Terms", "warranty"));
+    }
+
+    // ── 9. Scope ──────────────────────────────────────────────
+    var scopeList = ["scope_hw", "scope_sw", "scope_mfg", "scope_inst", "scope_com"];
+    var scopeLabels = { scope_hw: "HW", scope_sw: "SW", scope_mfg: "MFG", scope_inst: "Inst", scope_com: "Com" };
+    var hasScope = scopeList.some(function(f) { return has(f); });
+    if (hasScope) {
+      body += sec("🔍", "Scope");
+      body += '<div class="sf2-scope-row">';
+      scopeList.forEach(function(f) {
+        if (!has(f)) return;
+        body += '<label class="sf2-scope-item">'
+          + '<input type="checkbox" name="' + f + '" value="1"> '
+          + scopeLabels[f] + '</label>';
+      });
+      body += '</div>';
+    }
+
+    // ── 10. Lead Times ────────────────────────────────────────
+    if (has("critical_lead_time") || has("normal_lead_time")) {
+      body += sec("⏱", "Lead Times");
+      body += row2(
+        field("Critical Lead Time", "critical_lead_time", { type: "number" }),
+        field("Normal Lead Time",   "normal_lead_time",   { type: "number" })
+      );
+    }
+
+    // ── 11. Task-Specific Fields ──────────────────────────────
+    var taskRows = {};
+    Object.keys(fields).forEach(function(key) {
+      var cfg = fields[key];
+      if (!cfg || !cfg.task_row) return;
+      var r = cfg.task_row;
+      if (!taskRows[r]) {
+        taskRows[r] = { s: null, u: null, ad: null, name: taskNames[r] || ("Task " + r) };
+      }
+      // Avoid matching "sh_*", "sw_*", "std_*", "sc_*" as task 's' fields
+      if (key.match(/^s\d/) || key === "s")  taskRows[r].s  = key;
+      if (key.match(/^u\d/) || key === "u")  taskRows[r].u  = key;
+      if (key.match(/^ad/))                  taskRows[r].ad = key;
+    });
+
+    var sortedTaskRows = Object.keys(taskRows).sort(function(a, b) {
+      return parseInt(a) - parseInt(b);
+    });
+
+    if (sortedTaskRows.length > 0) {
+      body += sec("📝", "Task-Specific Fields");
+      body += '<table class="sf2-task-table">';
+      body += '<thead><tr>'
+        + '<th style="width:40%">Task Description</th>'
+        + '<th style="width:20%">Lead Time (S)</th>'
+        + '<th style="width:20%">Effort Days (U)</th>'
+        + '<th style="width:20%">Payment % (AD)</th>'
+        + '</tr></thead><tbody>';
+
+      sortedTaskRows.forEach(function(rn) {
+        var tk = taskRows[rn];
+        body += '<tr>'
+          + '<td>' + h(tk.name) + '</td>'
+          + '<td><input type="number" step="any" name="' + (tk.s  || "") + '" placeholder="—" ' + (tk.s  ? '' : 'disabled') + '></td>'
+          + '<td><input type="number" step="any" name="' + (tk.u  || "") + '" placeholder="—" ' + (tk.u  ? '' : 'disabled') + '></td>'
+          + '<td><input type="number" step="any" name="' + (tk.ad || "") + '" placeholder="—" ' + (tk.ad ? '' : 'disabled') + '></td>'
+          + '</tr>';
+      });
+
+      body += '</tbody></table>';
+    }
+
+    // ── Assemble ──────────────────────────────────────────────
+    var html = css + [
+      '<div class="sf2-wrap">',
+        '<div class="sf2-topbar">',
+          '<div class="sf2-topbar-left">',
+            '<div class="sf2-topbar-name">Project Setup</div>',
+            '<div class="sf2-topbar-id">' + h(projectId) + '</div>',
+          '</div>',
+          '<div class="sf2-topbar-actions">',
+            '<button type="button" class="btn btn-secondary btn-sm" onclick="switchToProjects()">Cancel</button>',
+            '<button type="button" class="btn btn-primary btn-sm" id="sf2-save-btn" onclick="doSetupSave(\'' + h(projectId) + '\')">Save &amp; Continue →</button>',
+          '</div>',
+        '</div>',
+        '<div class="sf2-body">',
+          '<form id="project-setup-form">',
+            body,
+          '</form>',
+        '</div>',
+      '</div>',
+    ].join("");
+
+    page.innerHTML = html;
+
+    // ── Save handler ──────────────────────────────────────────
+    window.doSetupSave = async function(pid) {
+      var btn = document.getElementById("sf2-save-btn");
+      var formData = {};
+      var els = document.getElementById("project-setup-form").elements;
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!el.name || el.disabled) continue;
+        if (el.type === "checkbox") {
+          formData[el.name] = el.checked ? el.value : "";
+        } else {
+          formData[el.name] = el.value;
+        }
+      }
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px"></span>';
+      try {
+        var res = await API.req("POST", "/projects/" + pid + "/setup", formData);
+        if (res.success) {
+          toast("Project setup completed!");
+
+          // Patch in-memory master list directly — don't clear cache
+          if (window._masterListFull) {
+            window._masterListFull.forEach(function(m) {
+              if (m.file_id === pid || m.project_id === pid) {
+                m.da_status = "CONFIGURED";
+              }
+            });
+          }
+          if (window._masterList) {
+            window._masterList.forEach(function(m) {
+              if (m.file_id === pid || m.project_id === pid) {
+                m.da_status = "CONFIGURED";
+              }
+            });
+          }
+
+          // Re-render sidebar with patched data
+          var searchTerm = document.getElementById("master-search-input")?.value || "";
+          filterMasterList(searchTerm);
+
+          openProject(pid);
+        } else {
+          toast(res.message || "Save failed", "error");
+          btn.disabled = false;
+          btn.innerHTML = "Save &amp; Continue →";
+        }
+      } catch(err) {
+        toast(err.message || "Save failed", "error");
+        btn.disabled = false;
+        btn.innerHTML = "Save &amp; Continue →";
+      }
+    };
+
+  } catch(err) {
+    console.error("Setup form error:", err);
+    page.innerHTML = '<div class="alert alert-error">Failed to load setup form: ' + h(err.message) + '</div>';
+  }
 }
 
 function updateProjectHeaderTimestamp(timestamp) {

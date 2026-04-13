@@ -436,174 +436,88 @@ def create_project_from_monitor():
     
     return jsonify(result)
 
-@app.route("/api/projects/create", methods=["POST"])
+@app.route("/api/projects/<project_id>/setup", methods=["GET", "POST"])
 @login_required
-def create_project():
-    """Create a new project from template with form data"""
-    from excel_db import DATA_DIR, get_cache_path, generate_sysmemory_json, get_discipline_dirs
-    import shutil
-    import openpyxl
-    import os
-    from datetime import datetime
-    
+def project_setup(project_id):
+    """Get setup fields or save setup data for a new project"""
     user = get_current_user()
-    # Only PM or pm_head can create projects
+    
+    # Only PM or pm_head can access setup
     if user["role"] not in ("pm", "pm_head"):
         return jsonify({"error": "Access denied"}), 403
     
-    data = request.get_json()
+    from excel_db import get_setup_fields, write_project_setup_data, get_discipline_dirs, _read_sheet_cache
+    import os
     
-    # Get OR Number for filename
-    or_number = data.get("or_number", "")
-    if not or_number:
-        return jsonify({"error": "OR Number is required"}), 400
+    # Get department for this user
+    from excel_db import ROLE_TO_DEPT
+    dept = ROLE_TO_DEPT.get(user["role"], "PM")
     
-    # Get section for filename
-    section = data.get("section", "")
+    # Get the schedule cache path to check if JSON exists
+    _, _, sched_cache, _ = get_discipline_dirs(user["role"])
+    cache_path = os.path.join(sched_cache, project_id + "_sheet.json")
     
-    # Generate filename: PrjSch_{or_number}_{section}.xlsx
-    # Replace any slashes with underscores
-    or_number_clean = or_number.replace("/", "_")
-    section_clean = section.replace("/", "_") if section else ""
+    # If GET request: return the setup form configuration
+    if request.method == "GET":
+        # If JSON cache already exists, project is already set up
+        if os.path.exists(cache_path):
+            return jsonify({
+                "already_setup": True,
+                "message": "Project already has a cache file"
+            })
+        
+        # Get the setup fields configuration
+        setup_fields = get_setup_fields(dept)
+        
+        # Get task names for rows that have S, U, or AD fields
+        from openpyxl import load_workbook
+        projects_dir, _, _, _ = get_discipline_dirs(user["role"])
+        file_path = os.path.join(projects_dir, project_id + ".xlsx")
+        
+        if not os.path.exists(file_path):
+            file_path = os.path.join(projects_dir, project_id + ".xlsb")
+        
+        task_names = {}
+        if os.path.exists(file_path):
+            wb = load_workbook(file_path, data_only=True)
+            ws = wb.active
+            # Read task names from column I for rows 9-55
+            for row in range(9, 56):
+                task_name = ws[f"I{row}"].value
+                if task_name:
+                    task_names[row] = str(task_name).strip()
+            wb.close()
+        
+        return jsonify({
+            "already_setup": False,
+            "fields": setup_fields,
+            "task_names": task_names,
+            "project_id": project_id
+        })
     
-    if section_clean:
-        filename = f"PrjSch_{or_number_clean}_{section_clean}.xlsx"
-    else:
-        filename = f"PrjSch_{or_number_clean}.xlsx"
-    
-    # Save to PM schedule folder
-    projects_dir, _, _, _ = get_discipline_dirs("pm_head")
-    new_file_path = os.path.join(projects_dir, filename)
-    
-    # Check if file already exists
-    if os.path.exists(new_file_path):
-        return jsonify({"error": f"Project already exists: {filename}"}), 409
-    
-    # Template path
-    template_path = os.path.join(DATA_DIR, "Template", "PrjSch_Template_V2.0.xlsx")
-    if not os.path.exists(template_path):
-        return jsonify({"error": "Template file not found"}), 500
-    
-    # Copy template to new location
-    shutil.copy2(template_path, new_file_path)
-    
-    # Open and populate the new file
-    wb = openpyxl.load_workbook(new_file_path)
-    ws = wb.active  # PrjSch sheet
-    
-    # Helper function to clean empty strings
-    def clean_value(value):
-        return value if value and value != "" else None
-    
-    def clean_number(value):
-        if not value or value == "":
-            return 0
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return 0
-    
-    # ============================================
-    # MAP FORM DATA TO EXCEL CELLS
-    # ============================================
-    
-    # Header Section (Rows 1-3)
-    ws["D1"] = clean_value(data.get("or_number"))
-    ws["D2"] = clean_value(data.get("master_or"))
-    ws["D3"] = clean_value(data.get("client_po"))
-    ws["I1"] = clean_value(data.get("quote_number"))
-    ws["I2"] = clean_value(data.get("sales_engineer"))
-    ws["I3"] = clean_value(data.get("sales_manager"))
-    
-    # Project Details (Rows 9-15)
-    ws["D9"] = clean_number(data.get("po_value"))
-    ws["D10"] = clean_value(data.get("customer_name"))
-    ws["D11"] = clean_value(data.get("end_customer"))
-    ws["D12"] = clean_value(data.get("consultant"))
-    ws["D13"] = clean_value(data.get("project_desc"))
-    ws["D14"] = clean_value(data.get("section"))
-    ws["D15"] = clean_value(data.get("mfg_loc", "GON"))
-    
-    # Efforts (Rows 17-21)
-    ws["D17"] = clean_number(data.get("hw_efforts"))
-    ws["D18"] = clean_number(data.get("std_panels"))
-    ws["D19"] = clean_number(data.get("act_panels"))
-    ws["D20"] = clean_number(data.get("sw_efforts"))
-    ws["D21"] = clean_number(data.get("mfg_efforts"))
-    
-    # Actual Efforts (Rows 17,20,21 - Column B)
-    ws["B17"] = clean_number(data.get("actual_hw_efforts"))
-    ws["B20"] = clean_number(data.get("actual_sw_efforts"))
-    ws["B21"] = clean_number(data.get("actual_mfg_efforts"))
-    
-    # Dates (Rows 23-34, Column C)
-    ws["C23"] = clean_value(data.get("po_date"))
-    ws["C24"] = clean_value(data.get("opf_recpt"))
-    ws["C25"] = clean_value(data.get("hw_input"))
-    ws["C26"] = clean_value(data.get("dwg_sub"))
-    ws["C27"] = clean_value(data.get("dwg_appr"))
-    ws["C28"] = clean_value(data.get("hw_fat"))
-    ws["C29"] = clean_value(data.get("dispatch"))
-    ws["C30"] = clean_value(data.get("sw_input"))
-    ws["C31"] = clean_value(data.get("sw_fat"))
-    ws["C32"] = clean_value(data.get("install"))
-    ws["C33"] = clean_value(data.get("precomm"))
-    ws["C34"] = clean_value(data.get("comm"))
-    
-    # Stakeholders (Rows 36-42, Column C)
-    ws["C36"] = clean_value(data.get("sh_sales"))
-    ws["C37"] = clean_value(data.get("sh_hw"))
-    ws["C38"] = clean_value(data.get("sh_sw"))
-    ws["C39"] = clean_value(data.get("sh_byr"))
-    ws["C40"] = clean_value(data.get("sh_mfg"))
-    ws["C41"] = clean_value(data.get("sh_ec"))
-    ws["C42"] = clean_value(data.get("sh_ac"))
-    
-    # Scope Selection (Row 9, Columns AG-AK)
-    ws["AG9"] = clean_value(data.get("scope_hw", "NO"))
-    ws["AH9"] = clean_value(data.get("scope_sw", "NO"))
-    ws["AI9"] = clean_value(data.get("scope_mfg", "NO"))
-    ws["AJ9"] = clean_value(data.get("scope_inst", "NO"))
-    ws["AK9"] = clean_value(data.get("scope_com", "NO"))
-    
-    # LD Fields (Row AF1-AF4)
-    ws["AF1"] = clean_value(data.get("ld_date"))
-    ws["AF2"] = clean_number(data.get("ld_maxwk"))
-    ws["AF3"] = clean_number(data.get("ld_maxov"))
-    ws["AF4"] = clean_value(data.get("ld_remarks"))
-    
-    # Warranty (Row AF6)
-    ws["AF6"] = clean_value(data.get("warranty"))
-    
-    # Actuals (Rows 43-52)
-    ws["B43"] = clean_number(data.get("balance_panels"))
-    ws["B44"] = clean_number(data.get("panel_disp_act"))
-    ws["B45"] = clean_number(data.get("est_va_pct"))
-    ws["B46"] = clean_number(data.get("est_va"))
-    ws["B47"] = clean_number(data.get("est_sm_pct"))
-    ws["B48"] = clean_number(data.get("est_sm"))
-    ws["B49"] = clean_number(data.get("act_va_pct"))
-    ws["B50"] = clean_number(data.get("act_va"))
-    ws["B51"] = clean_number(data.get("act_sm_pct"))
-    ws["B52"] = clean_number(data.get("act_sm"))
-    ws["C53"] = clean_value(data.get("reason_remark"))
-    
-    # Save the file
-    wb.save(new_file_path)
-    wb.close()
-    
-    # Generate JSON cache for the new project
-    project_id = filename.replace(".xlsx", "")
-    _, _, sched_cache, _ = get_discipline_dirs("pm_head")
-    generate_sysmemory_json(new_file_path, project_id, sched_cache)
-    
-    print(f"[Create Project] Created: {filename}")
-    
-    return jsonify({
-        "message": "Project created successfully",
-        "filename": filename,
-        "project_id": project_id
-    }), 201
+    # If POST request: save the setup data
+    if request.method == "POST":
+        form_data = request.get_json()
+        
+        if not form_data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Write data to Excel and generate cache
+        success, message, last_modified = write_project_setup_data(project_id, form_data, user["role"])
+        
+        if not success:
+            return jsonify({"error": message}), 500
+        
+        # Also update monitor timestamp
+        if last_modified:
+            from excel_db import update_monitor_timestamp
+            update_monitor_timestamp(project_id, last_modified, user["role"])
+        
+        return jsonify({
+            "success": True,
+            "message": message,
+            "last_modified": last_modified
+        })
 
 # ── User management (admin only) ──────────────────────────────
 VALID_ROLES = ["admin", "sw_head", "hw_head", "mfg_head", "pm_head", "pm", "hw_tl", "sw_tl", "mfg_tl"]

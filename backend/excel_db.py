@@ -150,6 +150,208 @@ DEPT_CONFIG = {
     },
 }
 
+# ── Project Setup Cell Mapping ────────────────────────────────────
+# Maps form fields to Excel cells for each department
+# Used when a new project (without JSON cache and timestamp) is opened for setup
+
+PROJECT_SETUP_CELL_MAP = {
+    "PM": {
+        # Header Fields (always editable - blue cells)
+        "master_or":        {"sheet": "PrjSch", "cell": "D2", "type": "text"},
+        "client_po":        {"sheet": "PrjSch", "cell": "D3", "type": "text"},
+        "quote_number":     {"sheet": "PrjSch", "cell": "I1", "type": "text"},
+        "sales_engineer":   {"sheet": "PrjSch", "cell": "I2", "type": "text"},
+        "sales_manager":    {"sheet": "PrjSch", "cell": "I3", "type": "text"},
+        
+        # Project Details (blue cells)
+        "customer_name":    {"sheet": "PrjSch", "cell": "D10", "type": "text"},
+        "end_customer":     {"sheet": "PrjSch", "cell": "D11", "type": "text"},
+        "consultant":       {"sheet": "PrjSch", "cell": "D12", "type": "text"},
+        "project_desc":     {"sheet": "PrjSch", "cell": "D13", "type": "text"},
+        "mfg_loc":          {"sheet": "PrjSch", "cell": "D15", "type": "dropdown", "options": ["GON", "DUB"]},
+        
+        # Efforts (blue cells)
+        "hw_efforts":       {"sheet": "PrjSch", "cell": "D17", "type": "number"},
+        "std_panels":       {"sheet": "PrjSch", "cell": "D18", "type": "number"},
+        "act_panels":       {"sheet": "PrjSch", "cell": "D19", "type": "number"},
+        "sw_efforts":       {"sheet": "PrjSch", "cell": "D20", "type": "number"},
+        "mfg_efforts":      {"sheet": "PrjSch", "cell": "D21", "type": "number"},
+        
+        # Actual Efforts (blue cells - B17, B20, B21)
+        "actual_hw_efforts":   {"sheet": "PrjSch", "cell": "B17", "type": "number"},
+        "actual_sw_efforts":   {"sheet": "PrjSch", "cell": "B20", "type": "number"},
+        "actual_mfg_efforts":  {"sheet": "PrjSch", "cell": "B21", "type": "number"},
+        
+        # Dates (Customer Dates - Column C, blue cells)
+        "po_date":          {"sheet": "PrjSch", "cell": "C23", "type": "date"},
+        "opf_recpt":        {"sheet": "PrjSch", "cell": "C24", "type": "date"},
+        "hw_input":         {"sheet": "PrjSch", "cell": "C25", "type": "date"},
+        "dwg_sub":          {"sheet": "PrjSch", "cell": "C26", "type": "date"},
+        "dwg_appr":         {"sheet": "PrjSch", "cell": "C27", "type": "date"},
+        "hw_fat":           {"sheet": "PrjSch", "cell": "C28", "type": "date"},
+        "dispatch":         {"sheet": "PrjSch", "cell": "C29", "type": "date"},
+        "sw_input":         {"sheet": "PrjSch", "cell": "C30", "type": "date"},
+        "sw_fat":           {"sheet": "PrjSch", "cell": "C31", "type": "date"},
+        "install":          {"sheet": "PrjSch", "cell": "C32", "type": "date"},
+        "precomm":          {"sheet": "PrjSch", "cell": "C33", "type": "date"},
+        "comm":             {"sheet": "PrjSch", "cell": "C34", "type": "date"},
+        
+        # Stakeholders (Column C, blue cells)
+        "sh_sales":         {"sheet": "PrjSch", "cell": "C36", "type": "text"},
+        "sh_hw":            {"sheet": "PrjSch", "cell": "C37", "type": "text"},
+        "sh_sw":            {"sheet": "PrjSch", "cell": "C38", "type": "text"},
+        "sh_byr":           {"sheet": "PrjSch", "cell": "C39", "type": "text"},
+        "sh_mfg":           {"sheet": "PrjSch", "cell": "C40", "type": "text"},
+        "sh_ec":            {"sheet": "PrjSch", "cell": "C41", "type": "text"},
+        "sh_ac":            {"sheet": "PrjSch", "cell": "C42", "type": "text"},
+        
+        # Actuals (Column C - shifted from B, blue cells)
+        "panel_disp_act":   {"sheet": "PrjSch", "cell": "C44", "type": "number"},
+        "est_va_pct":       {"sheet": "PrjSch", "cell": "C45", "type": "number"},
+        "est_va":           {"sheet": "PrjSch", "cell": "C46", "type": "number"},
+        "est_sm_pct":       {"sheet": "PrjSch", "cell": "C47", "type": "number"},
+        "est_sm":           {"sheet": "PrjSch", "cell": "C48", "type": "number"},
+        "act_va_pct":       {"sheet": "PrjSch", "cell": "C49", "type": "number"},
+        "act_va":           {"sheet": "PrjSch", "cell": "C50", "type": "number"},
+        "act_sm_pct":       {"sheet": "PrjSch", "cell": "C51", "type": "number"},
+        "act_sm":           {"sheet": "PrjSch", "cell": "C52", "type": "number"},
+        "reason_remark":    {"sheet": "PrjSch", "cell": "C53", "type": "text"},
+        
+        # LD Details
+        "ld_date":          {"sheet": "PrjSch", "cell": "AF1", "type": "date"},
+        "ld_maxwk":         {"sheet": "PrjSch", "cell": "AF2", "type": "number"},
+        "ld_maxov":         {"sheet": "PrjSch", "cell": "AF3", "type": "number"},
+        "ld_remarks":       {"sheet": "PrjSch", "cell": "AF4", "type": "text"},
+        
+        # Warranty
+        "warranty":         {"sheet": "PrjSch", "cell": "AF6", "type": "text"},
+        
+        # Scope (YES/NO dropdowns at row 9, columns AG-AK)
+        "scope_hw":         {"sheet": "PrjSch", "cell": "AG9", "type": "dropdown", "options": ["YES", "NO"]},
+        "scope_sw":         {"sheet": "PrjSch", "cell": "AH9", "type": "dropdown", "options": ["YES", "NO"]},
+        "scope_mfg":        {"sheet": "PrjSch", "cell": "AI9", "type": "dropdown", "options": ["YES", "NO"]},
+        "scope_inst":       {"sheet": "PrjSch", "cell": "AJ9", "type": "dropdown", "options": ["YES", "NO"]},
+        "scope_com":        {"sheet": "PrjSch", "cell": "AK9", "type": "dropdown", "options": ["YES", "NO"]},
+        
+        # Editable Number Fields (Column E - blue cells, only write if changed)
+        "internal_kom":        {"sheet": "PrjSch", "cell": "E10", "type": "number"},
+        "engg_ip_collection":  {"sheet": "PrjSch", "cell": "E12", "type": "number"},
+        "design_preparation":  {"sheet": "PrjSch", "cell": "E13", "type": "number"},
+        "electrical_drawings": {"sheet": "PrjSch", "cell": "E17", "type": "number"},
+        
+        # Lead Time Fields (Column S3, S4)
+        "critical_lead_time":  {"sheet": "PrjSch", "cell": "S3", "type": "number"},
+        "normal_lead_time":    {"sheet": "PrjSch", "cell": "S4", "type": "number"},
+        
+        # Column S (Lead Time) - per row, with task name from Column I
+        "s9":  {"sheet": "PrjSch", "cell": "S9",  "row": 9,  "task_row": 9,  "type": "number"},
+        "s10": {"sheet": "PrjSch", "cell": "S10", "row": 10, "task_row": 10, "type": "number"},
+        "s11": {"sheet": "PrjSch", "cell": "S11", "row": 11, "task_row": 11, "type": "number"},
+        "s12": {"sheet": "PrjSch", "cell": "S12", "row": 12, "task_row": 12, "type": "number"},
+        "s13": {"sheet": "PrjSch", "cell": "S13", "row": 13, "task_row": 13, "type": "number"},
+        "s16": {"sheet": "PrjSch", "cell": "S16", "row": 16, "task_row": 16, "type": "number"},
+        "s17": {"sheet": "PrjSch", "cell": "S17", "row": 17, "task_row": 17, "type": "number"},
+        "s22": {"sheet": "PrjSch", "cell": "S22", "row": 22, "task_row": 22, "type": "number"},
+        "s23": {"sheet": "PrjSch", "cell": "S23", "row": 23, "task_row": 23, "type": "number"},
+        "s24": {"sheet": "PrjSch", "cell": "S24", "row": 24, "task_row": 24, "type": "number"},
+        "s25": {"sheet": "PrjSch", "cell": "S25", "row": 25, "task_row": 25, "type": "number"},
+        "s26": {"sheet": "PrjSch", "cell": "S26", "row": 26, "task_row": 26, "type": "number"},
+        "s27": {"sheet": "PrjSch", "cell": "S27", "row": 27, "task_row": 27, "type": "number"},
+        "s28": {"sheet": "PrjSch", "cell": "S28", "row": 28, "task_row": 28, "type": "number"},
+        "s29": {"sheet": "PrjSch", "cell": "S29", "row": 29, "task_row": 29, "type": "number"},
+        "s30": {"sheet": "PrjSch", "cell": "S30", "row": 30, "task_row": 30, "type": "number"},
+        "s31": {"sheet": "PrjSch", "cell": "S31", "row": 31, "task_row": 31, "type": "number"},
+        "s32": {"sheet": "PrjSch", "cell": "S32", "row": 32, "task_row": 32, "type": "number"},
+        "s33": {"sheet": "PrjSch", "cell": "S33", "row": 33, "task_row": 33, "type": "number"},
+        "s34": {"sheet": "PrjSch", "cell": "S34", "row": 34, "task_row": 34, "type": "number"},
+        "s35": {"sheet": "PrjSch", "cell": "S35", "row": 35, "task_row": 35, "type": "number"},
+        "s36": {"sheet": "PrjSch", "cell": "S36", "row": 36, "task_row": 36, "type": "number"},
+        "s37": {"sheet": "PrjSch", "cell": "S37", "row": 37, "task_row": 37, "type": "number"},
+        "s38": {"sheet": "PrjSch", "cell": "S38", "row": 38, "task_row": 38, "type": "number"},
+        "s39": {"sheet": "PrjSch", "cell": "S39", "row": 39, "task_row": 39, "type": "number"},
+        "s40": {"sheet": "PrjSch", "cell": "S40", "row": 40, "task_row": 40, "type": "number"},
+        "s41": {"sheet": "PrjSch", "cell": "S41", "row": 41, "task_row": 41, "type": "number"},
+        "s46": {"sheet": "PrjSch", "cell": "S46", "row": 46, "task_row": 46, "type": "number"},
+        "s47": {"sheet": "PrjSch", "cell": "S47", "row": 47, "task_row": 47, "type": "number"},
+        "s48": {"sheet": "PrjSch", "cell": "S48", "row": 48, "task_row": 48, "type": "number"},
+        "s49": {"sheet": "PrjSch", "cell": "S49", "row": 49, "task_row": 49, "type": "number"},
+        "s50": {"sheet": "PrjSch", "cell": "S50", "row": 50, "task_row": 50, "type": "number"},
+        "s51": {"sheet": "PrjSch", "cell": "S51", "row": 51, "task_row": 51, "type": "number"},
+        "s52": {"sheet": "PrjSch", "cell": "S52", "row": 52, "task_row": 52, "type": "number"},
+        "s53": {"sheet": "PrjSch", "cell": "S53", "row": 53, "task_row": 53, "type": "number"},
+        "s54": {"sheet": "PrjSch", "cell": "S54", "row": 54, "task_row": 54, "type": "number"},
+        "s55": {"sheet": "PrjSch", "cell": "S55", "row": 55, "task_row": 55, "type": "number"},
+        
+        # Column U (Effort Days) - per row, with task name from Column I
+        "u12": {"sheet": "PrjSch", "cell": "U12", "row": 12, "task_row": 12, "type": "number"},
+        "u13": {"sheet": "PrjSch", "cell": "U13", "row": 13, "task_row": 13, "type": "number"},
+        "u14": {"sheet": "PrjSch", "cell": "U14", "row": 14, "task_row": 14, "type": "number"},
+        "u15": {"sheet": "PrjSch", "cell": "U15", "row": 15, "task_row": 15, "type": "number"},
+        "u16": {"sheet": "PrjSch", "cell": "U16", "row": 16, "task_row": 16, "type": "number"},
+        "u17": {"sheet": "PrjSch", "cell": "U17", "row": 17, "task_row": 17, "type": "number"},
+        "u18": {"sheet": "PrjSch", "cell": "U18", "row": 18, "task_row": 18, "type": "number"},
+        "u19": {"sheet": "PrjSch", "cell": "U19", "row": 19, "task_row": 19, "type": "number"},
+        "u20": {"sheet": "PrjSch", "cell": "U20", "row": 20, "task_row": 20, "type": "number"},
+        "u21": {"sheet": "PrjSch", "cell": "U21", "row": 21, "task_row": 21, "type": "number"},
+        "u22": {"sheet": "PrjSch", "cell": "U22", "row": 22, "task_row": 22, "type": "number"},
+        "u23": {"sheet": "PrjSch", "cell": "U23", "row": 23, "task_row": 23, "type": "number"},
+        "u31": {"sheet": "PrjSch", "cell": "U31", "row": 31, "task_row": 31, "type": "number"},
+        "u35": {"sheet": "PrjSch", "cell": "U35", "row": 35, "task_row": 35, "type": "number"},
+        "u36": {"sheet": "PrjSch", "cell": "U36", "row": 36, "task_row": 36, "type": "number"},
+        "u37": {"sheet": "PrjSch", "cell": "U37", "row": 37, "task_row": 37, "type": "number"},
+        "u38": {"sheet": "PrjSch", "cell": "U38", "row": 38, "task_row": 38, "type": "number"},
+        "u39": {"sheet": "PrjSch", "cell": "U39", "row": 39, "task_row": 39, "type": "number"},
+        "u40": {"sheet": "PrjSch", "cell": "U40", "row": 40, "task_row": 40, "type": "number"},
+        "u41": {"sheet": "PrjSch", "cell": "U41", "row": 41, "task_row": 41, "type": "number"},
+        "u42": {"sheet": "PrjSch", "cell": "U42", "row": 42, "task_row": 42, "type": "number"},
+        "u43": {"sheet": "PrjSch", "cell": "U43", "row": 43, "task_row": 43, "type": "number"},
+        "u44": {"sheet": "PrjSch", "cell": "U44", "row": 44, "task_row": 44, "type": "number"},
+        "u45": {"sheet": "PrjSch", "cell": "U45", "row": 45, "task_row": 45, "type": "number"},
+        "u46": {"sheet": "PrjSch", "cell": "U46", "row": 46, "task_row": 46, "type": "number"},
+        "u47": {"sheet": "PrjSch", "cell": "U47", "row": 47, "task_row": 47, "type": "number"},
+        "u48": {"sheet": "PrjSch", "cell": "U48", "row": 48, "task_row": 48, "type": "number"},
+        "u49": {"sheet": "PrjSch", "cell": "U49", "row": 49, "task_row": 49, "type": "number"},
+        "u50": {"sheet": "PrjSch", "cell": "U50", "row": 50, "task_row": 50, "type": "number"},
+        "u51": {"sheet": "PrjSch", "cell": "U51", "row": 51, "task_row": 51, "type": "number"},
+        "u52": {"sheet": "PrjSch", "cell": "U52", "row": 52, "task_row": 52, "type": "number"},
+        "u54": {"sheet": "PrjSch", "cell": "U54", "row": 54, "task_row": 54, "type": "number"},
+        
+        # Column AD (Payment %) - specific rows only
+        "ad9":  {"sheet": "PrjSch", "cell": "AD9",  "row": 9,  "task_row": 9,  "type": "number"},
+        "ad10": {"sheet": "PrjSch", "cell": "AD10", "row": 10, "task_row": 10, "type": "number"},
+        "ad11": {"sheet": "PrjSch", "cell": "AD11", "row": 11, "task_row": 11, "type": "number"},
+        "ad12": {"sheet": "PrjSch", "cell": "AD12", "row": 12, "task_row": 12, "type": "number"},
+        "ad13": {"sheet": "PrjSch", "cell": "AD13", "row": 13, "task_row": 13, "type": "number"},
+        "ad14": {"sheet": "PrjSch", "cell": "AD14", "row": 14, "task_row": 14, "type": "number"},
+        "ad15": {"sheet": "PrjSch", "cell": "AD15", "row": 15, "task_row": 15, "type": "number"},
+        "ad16": {"sheet": "PrjSch", "cell": "AD16", "row": 16, "task_row": 16, "type": "number"},
+        "ad18": {"sheet": "PrjSch", "cell": "AD18", "row": 18, "task_row": 18, "type": "number"},
+        "ad19": {"sheet": "PrjSch", "cell": "AD19", "row": 19, "task_row": 19, "type": "number"},
+        "ad22": {"sheet": "PrjSch", "cell": "AD22", "row": 22, "task_row": 22, "type": "number"},
+        "ad24": {"sheet": "PrjSch", "cell": "AD24", "row": 24, "task_row": 24, "type": "number"},
+        "ad25": {"sheet": "PrjSch", "cell": "AD25", "row": 25, "task_row": 25, "type": "number"},
+        "ad31": {"sheet": "PrjSch", "cell": "AD31", "row": 31, "task_row": 31, "type": "number"},
+        "ad32": {"sheet": "PrjSch", "cell": "AD32", "row": 32, "task_row": 32, "type": "number"},
+        "ad33": {"sheet": "PrjSch", "cell": "AD33", "row": 33, "task_row": 33, "type": "number"},
+        "ad34": {"sheet": "PrjSch", "cell": "AD34", "row": 34, "task_row": 34, "type": "number"},
+        "ad35": {"sheet": "PrjSch", "cell": "AD35", "row": 35, "task_row": 35, "type": "number"},
+        "ad40": {"sheet": "PrjSch", "cell": "AD40", "row": 40, "task_row": 40, "type": "number"},
+        "ad43": {"sheet": "PrjSch", "cell": "AD43", "row": 43, "task_row": 43, "type": "number"},
+        "ad48": {"sheet": "PrjSch", "cell": "AD48", "row": 48, "task_row": 48, "type": "number"},
+        "ad49": {"sheet": "PrjSch", "cell": "AD49", "row": 49, "task_row": 49, "type": "number"},
+        "ad50": {"sheet": "PrjSch", "cell": "AD50", "row": 50, "task_row": 50, "type": "number"},
+        "ad51": {"sheet": "PrjSch", "cell": "AD51", "row": 51, "task_row": 51, "type": "number"},
+        "ad52": {"sheet": "PrjSch", "cell": "AD52", "row": 52, "task_row": 52, "type": "number"},
+        "ad53": {"sheet": "PrjSch", "cell": "AD53", "row": 53, "task_row": 53, "type": "number"},
+        "ad54": {"sheet": "PrjSch", "cell": "AD54", "row": 54, "task_row": 54, "type": "number"},
+        "ad55": {"sheet": "PrjSch", "cell": "AD55", "row": 55, "task_row": 55, "type": "number"},
+    }
+}
+
+def get_setup_fields(dept):
+    """Return the field mapping for a department, or empty dict if not found"""
+    return PROJECT_SETUP_CELL_MAP.get(dept, {})
+
 def detect_dept_from_path(filepath):
     """Detect department by matching monitor_prefix against filepath."""
     for dept, cfg in DEPT_CONFIG.items():
@@ -1009,11 +1211,17 @@ def get_all_monitor_projects(role="sw_tl"):
                     swh_head = cells.get(f"{head_col}{row_num}", {}).get('v', '')
                     swe_name = cells.get(f"{tl_col}{row_num}", {}).get('v', '')
 
+                    # Inside the JSON cache block, after getting swe_name, add:
+                    da_value = cells.get(f"DA{row_num}", {}).get('v', '')
+
+                    # Inside the loop where results are appended, after calculating file_exists
+
                     results.append({
                         "project_id": project_id,
                         "file_id": normalized_id,
                         "stale": stale,
                         "file_exists": file_exists,
+                        "da_status": da_value,  
                         cfg["head_col"]: (swh_head or "").strip().upper(),  # "C" for SW, "C" for PM
                         cfg["tl_col"]: (swe_name or "").strip().upper(),    # "D" for SW, "D" for PM
                     })
@@ -1085,6 +1293,7 @@ def _master_row_to_entry(pid, ba_val, ba_rgb=None, swh_head=None, swe_name=None,
         "file_id":       normalized_id,  # actual file id e.g. SWESch_FSL_2122_CHN_OR004_PLC
         "stale":         stale,
         "file_exists":   file_exists,
+        "da_status": "",
         "swh_head":      (swh_head or "").strip().upper(),
         "swe_name":      (swe_name or "").strip().upper(),
     }
@@ -1217,12 +1426,48 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
     max_col = min(ws.max_column, max_col)
     cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
 
-    # Initialize PyCel for formula evaluation
+        # Initialize PyCel for formula evaluation
     excel_compiler = None
     if PY_CEL_AVAILABLE:
         try:
             excel_compiler = ExcelCompiler(filepath)
             print("PyCel initialized for formula evaluation")
+                
+                # Register missing COUNTA function
+            def counta_func(*args):
+                """Count non-empty values in the provided arguments/ranges"""
+                count = 0
+                for arg in args:
+                    if arg is None:
+                        continue
+                    if isinstance(arg, (list, tuple)):
+                        for item in arg:
+                            if item is not None and str(item).strip() != "":
+                                count += 1
+                    else:
+                        if str(arg).strip() != "":
+                            count += 1
+                return count
+                
+                # Register missing PRODUCT function
+            def product_func(*args):
+                """Multiply all provided numbers"""
+                result = 1
+                for arg in args:
+                    if arg is None:
+                        continue
+                    if isinstance(arg, (list, tuple)):
+                        for item in arg:
+                            if item is not None and isinstance(item, (int, float)):
+                                result *= item
+                    elif isinstance(arg, (int, float)):
+                        result *= arg
+                return result
+                
+            excel_compiler.functions['COUNTA'] = counta_func
+            excel_compiler.functions['PRODUCT'] = product_func
+            print("Registered COUNTA and PRODUCT functions")
+                
         except Exception as e:
             print(f"PyCel initialization failed: {e}, falling back to openpyxl only")
             excel_compiler = None
@@ -1846,14 +2091,53 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
     # Header columns for rows 1-7 (DE and DF)
     header_cols_1_7 = ["DE", "DF"]
     
-    # Initialize PyCel for CY-DJ formula evaluation only
+    # Initialize PyCel for formula evaluation
     excel_compiler = None
     if PY_CEL_AVAILABLE:
         try:
             excel_compiler = ExcelCompiler(filepath)
-            print(f"PyCel initialized for system memory generation: {project_id}")
+            print("PyCel initialized for formula evaluation")
+            
+            # Register missing COUNTA function
+            def counta_func(*args):
+                """Count non-empty values in the provided arguments/ranges"""
+                count = 0
+                for arg in args:
+                    if arg is None:
+                        continue
+                    if isinstance(arg, (list, tuple)):
+                        for item in arg:
+                            if item is not None and str(item).strip() != "":
+                                count += 1
+                    else:
+                        if str(arg).strip() != "":
+                            count += 1
+                return count
+            
+            # Register missing PRODUCT function
+            def product_func(*args):
+                """Multiply all provided numbers"""
+                result = 1
+                for arg in args:
+                    if arg is None:
+                        continue
+                    if isinstance(arg, (list, tuple)):
+                        for item in arg:
+                            if item is not None and isinstance(item, (int, float)):
+                                result *= item
+                    elif isinstance(arg, (int, float)):
+                        result *= arg
+                return result
+            
+            excel_compiler.functions['COUNTA'] = counta_func
+            excel_compiler.functions['PRODUCT'] = product_func
+            print("Registered COUNTA and PRODUCT functions")
+            
         except Exception as e:
-            print(f"PyCel initialization failed: {e}")
+            print(f"PyCel initialization failed: {e}, falling back to openpyxl only")
+            excel_compiler = None
+    else:
+        print("PyCel not available, using openpyxl only")
     
     # Prepare system memory data
     sysmemory_data = {
@@ -2312,7 +2596,11 @@ def load_user_overdue_status(user):
         if not project_id:
             continue
         
-        #print(f"[Overdue] Processing project: {project_id}")
+        # NEW: Skip if project has no sheet cache (new project)
+        sheet_cache_path = os.path.join(sched_cache, project_id + "_sheet.json")
+        if not os.path.exists(sheet_cache_path):
+            print(f"[Overdue] Skipping {project_id} - no sheet cache yet")
+            continue
         
         # Path to sysmemory JSON
         sysmemory_path = os.path.join(DATA_DIR, "cache", "SystemMemory", department, f"{project_id}_sysmemory.json")
@@ -2933,6 +3221,9 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
         cells[f"E{new_row}"] = {'v': normalized}
 
         cells[f"K{new_row}"] = {'v': float(ov_value)}  # Column K = OV Value
+
+        # ADD THIS: Mark as NEW project
+        cells[f"DA{new_row}"] = {'v': 'NEW'}
         
         # Update max_row
         monitor_data['max_row'] = new_row
@@ -2940,5 +3231,109 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
         # Write back
         with open(monitor_cache_path, 'w') as f:
             json.dump(monitor_data, f, indent=2)
+
+        # Clear in-memory cache so project appears immediately in sidebar
+        try:
+            import sys
+            if 'app' in sys.modules:
+                app_module = sys.modules['app']
+                if hasattr(app_module, '_master_projects_cache'):
+                    app_module._master_projects_cache.clear()
+                    print(f"[Cache] Cleared master projects cache for: {file_name}")
+        except Exception as e:
+            print(f"[Cache] Could not clear master cache: {e}")
     
     return {'success': True, 'file_name': file_name, 'project_id': file_name.replace('.xlsx', '')}
+
+def write_project_setup_data(project_id, form_data, role="pm_head"):
+    """Write setup form data to Excel file cells."""
+    from openpyxl import load_workbook
+    import os
+    from datetime import datetime
+    
+    dept = ROLE_TO_DEPT.get(role, "PM")
+    cell_map = PROJECT_SETUP_CELL_MAP.get(dept, {})
+    cfg = DEPT_CONFIG.get(dept, DEPT_CONFIG["PM"])
+    
+    if not cell_map:
+        return False, f"No setup cell mapping found for {dept}", None
+    
+    projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
+    file_path = os.path.join(projects_dir, project_id + ".xlsx")
+    
+    if not os.path.exists(file_path):
+        file_path = os.path.join(projects_dir, project_id + ".xlsb")
+        if not os.path.exists(file_path):
+            return False, f"Project file not found: {project_id}", None
+    
+    try:
+        wb = load_workbook(file_path)
+        
+        for field, value in form_data.items():
+            if field not in cell_map:
+                continue
+            
+            mapping = cell_map[field]
+            sheet_name = mapping.get("sheet", "PrjSch")
+            cell_ref = mapping["cell"]
+            field_type = mapping.get("type", "text")
+            
+            if sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+            else:
+                ws = wb.active
+            
+            if value is None or value == "":
+                cell_value = None
+            elif field_type == "number":
+                try:
+                    cell_value = float(value)
+                except (ValueError, TypeError):
+                    cell_value = 0
+            elif field_type == "date":
+                cell_value = value
+            else:
+                cell_value = str(value)
+            
+            ws[cell_ref] = cell_value
+        
+        wb.save(file_path)
+        
+        # Generate JSON cache
+        from excel_db import get_raw_sheet
+        sheet_data = get_raw_sheet(file_path, sched_cache=sched_cache, role=role)
+        last_modified = sheet_data.get('last_modified') if sheet_data else None
+        
+        # After generating JSON cache, update monitor DA column to "CONFIGURED"
+        try:
+            monitor_cache_path = os.path.join(get_cache_path(dept, "Monitoring"), f"{dept}_Monitor.json")
+            
+            if os.path.exists(monitor_cache_path):
+                with open(monitor_cache_path, 'r') as f:
+                    monitor_data = json.load(f)
+                
+                cells = monitor_data.get('cells', {})
+                
+                # Find the row with matching file_col
+                found_row = None
+                for coord, cell_info in cells.items():
+                    if coord.startswith(cfg['file_col']) and cell_info.get('v') == project_id:
+                        found_row = int(coord[len(cfg['file_col']):])
+                        break
+                
+                if found_row:
+                    cells[f"DA{found_row}"] = {'v': 'CONFIGURED', 'updated': True}
+                    
+                    with open(monitor_cache_path, 'w') as f:
+                        json.dump(monitor_data, f, indent=2)
+                    
+                    # Queue monitor Excel write
+                    queue_monitor_excel_write(dept, {f"DA{found_row}": 'CONFIGURED'})
+        except Exception as e:
+            print(f"[Setup] Failed to update monitor DA column: {e}")
+        
+        return True, "Setup data saved successfully", last_modified
+        
+    except Exception as e:
+        print(f"[Setup] Error writing to {project_id}: {e}")
+        return False, str(e), None
