@@ -1076,8 +1076,8 @@ async function renderSetupForm(projectId) {
 
     var fields    = result.fields    || {};
     var taskNames = result.task_names || {};
+    var isDark = document.documentElement.getAttribute("data-theme") !== "light";
 
-    // ── Tiny helpers ──────────────────────────────────────────
     function has(f) { return !!fields[f]; }
 
     function inp(name, opts) {
@@ -1086,7 +1086,7 @@ async function renderSetupForm(projectId) {
       if (!cfg) return "";
       var type = opts.type || cfg.type || "text";
       var req  = opts.req  ? ' required' : '';
-      var cls  = "sf2-input" + (opts.wide ? " wide" : "");
+      var cls  = "sf2-input";
 
       if (type === "dropdown") {
         var os = (cfg.options || []).map(function(o) {
@@ -1099,543 +1099,237 @@ async function renderSetupForm(projectId) {
         return '<input type="date" name="' + name + '" class="' + cls + '"' + req + '>';
       }
       if (type === "number") {
-        return '<input type="number" step="any" name="' + name
-          + '" class="' + cls + '" placeholder="0"' + req + '>';
+        return '<input type="number" step="any" name="' + name + '" class="' + cls + '" placeholder="0"' + req + '>';
       }
       return '<input type="text" name="' + name + '" class="' + cls + '"' + req + '>';
     }
 
-    // Field group: label + input in a .sf2-field div
     function field(label, name, opts) {
       if (!has(name)) return "";
       opts = opts || {};
-      var reqMark = opts.req ? '<span class="sf2-req-dot">*</span>' : '';
+      var reqMark = opts.req ? '<span class="sf2-req-dot"></span>' : '';
       return '<div class="sf2-field' + (opts.cls ? ' ' + opts.cls : '') + '">'
         + '<label class="sf2-label">' + reqMark + label + '</label>'
         + inp(name, opts)
         + '</div>';
     }
 
-    // Section header — compact pill style
-    function sec(icon, title) {
-      return '<div class="sf2-section-head">'
-        + '<span class="sf2-section-icon">' + icon + '</span>'
-        + '<span class="sf2-section-title">' + title + '</span>'
+    function card(icon, title, content, fullWidth) {
+      var cardClass = fullWidth ? 'sf2-card sf2-card-full' : 'sf2-card';
+      return '<div class="' + cardClass + '">'
+        + '<div class="sf2-card-header">'
+        + '<span class="sf2-card-icon">' + icon + '</span>'
+        + '<span class="sf2-card-title">' + title + '</span>'
+        + '</div>'
+        + '<div class="sf2-card-body">' + content + '</div>'
         + '</div>';
     }
 
-    // Row wrapper (2-col or 3-col grid)
-    function row2(a, b)    { return '<div class="sf2-row2">' + a + b + '</div>'; }
-    function row3(a, b, c) { return '<div class="sf2-row3">' + a + b + c + '</div>'; }
-    function row1(a)       { return '<div class="sf2-row1">' + a + '</div>'; }
+    function row1(a)          { return '<div class="sf2-row1">'   + a                 + '</div>'; }
+    function row2(a, b)       { return '<div class="sf2-row2">'   + a + b             + '</div>'; }
+    function row3(a, b, c)    { return '<div class="sf2-row3">'   + a + b + c         + '</div>'; }
+    function row4(a, b, c, d) { return '<div class="sf2-row4">'   + a + b + c + d     + '</div>'; }
 
-    // ── CSS ───────────────────────────────────────────────────
-    var css = `<style>
-/* ── Root wrap ── */
-.sf2-wrap {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg1);
-  font-family: var(--font-sans, 'Inter', 'Segoe UI', Arial, sans-serif);
-}
+    // ── Build all sections ─────────────────────────────────────
 
-/* ── Top bar ── */
-.sf2-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 24px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.sf2-topbar-left { display: flex; flex-direction: column; gap: 2px; }
-.sf2-topbar-name { font-size: 16px; font-weight: 700; color: var(--text1); letter-spacing: -0.02em; }
-.sf2-topbar-id   { font-size: 11px; color: var(--text3); font-family: var(--font-mono); }
-.sf2-topbar-actions { display: flex; gap: 10px; align-items: center; }
-
-/* ── Scrollable body ── */
-.sf2-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 24px 80px;
-}
-
-/* ── Section header ── */
-.sf2-section-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 24px 0 12px;
-  padding-bottom: 7px;
-  border-bottom: 1.5px solid var(--border);
-}
-.sf2-section-head:first-child { margin-top: 0; }
-.sf2-section-icon {
-  width: 26px; height: 26px;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 13px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.sf2-section-title {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text2);
-}
-
-/* ── Grid rows ── */
-.sf2-row2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 20px;
-  margin-bottom: 10px;
-}
-.sf2-row3 {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px 20px;
-  margin-bottom: 10px;
-}
-.sf2-row1 {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px 20px;
-  margin-bottom: 10px;
-}
-
-/* ── Individual field ── */
-.sf2-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.sf2-field.full { grid-column: 1 / -1; }
-
-/* ── Label ── */
-.sf2-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text2);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  user-select: none;
-}
-.sf2-req-dot {
-  width: 5px; height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  display: inline-block;
-  flex-shrink: 0;
-}
-
-/* ── Inputs ── */
-.sf2-input {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg2);
-  color: var(--text1);
-  font-family: inherit;
-  font-size: 13px;
-  width: 100%;
-  box-sizing: border-box;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.sf2-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(59,130,246,0.18);
-}
-select.sf2-input { cursor: pointer; }
-textarea.sf2-input {
-  height: auto;
-  min-height: 60px;
-  padding: 8px 10px;
-  resize: vertical;
-  line-height: 1.4;
-}
-
-/* ── Dates subsection: customer | PM layout ── */
-.sf2-dates-grid {
-  display: grid;
-  grid-template-columns: 160px 1fr 1fr;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-.sf2-dg-head {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text3);
-  padding: 5px 10px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-}
-.sf2-dg-head.center { text-align: center; }
-.sf2-dg-head.accent-col { background: rgba(59,130,246,0.07); }
-.sf2-dg-lbl {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text2);
-  padding: 6px 10px;
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-  border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-}
-.sf2-dg-lbl.req::before {
-  content: '';
-  width: 5px; height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  display: inline-block;
-  margin-right: 6px;
-  flex-shrink: 0;
-}
-.sf2-dg-cell {
-  padding: 4px 6px;
-  border-top: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  background: var(--bg1);
-  display: flex;
-  align-items: center;
-}
-.sf2-dg-cell:last-child { border-right: none; }
-.sf2-dg-cell.auto-cell {
-  font-size: 10px;
-  color: var(--text3);
-  font-style: italic;
-  justify-content: center;
-  background: var(--bg2);
-}
-.sf2-dg-cell input {
-  width: 100%;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--text1);
-  padding: 2px 2px;
-}
-.sf2-dg-cell input:focus { background: rgba(59,130,246,0.07); border-radius: 3px; }
-
-/* ── Stakeholders: inline badge-style layout ── */
-.sf2-sh-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-/* ── Scope checkboxes ── */
-.sf2-scope-row {
-  display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding: 10px 4px;
-  margin-bottom: 12px;
-}
-.sf2-scope-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text1);
-  cursor: pointer;
-}
-.sf2-scope-item input[type=checkbox] {
-  width: 15px; height: 15px;
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-
-/* ── Task table ── */
-.sf2-task-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  margin-top: 4px;
-}
-.sf2-task-table th {
-  padding: 7px 10px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text2);
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-}
-.sf2-task-table th:not(:first-child) { text-align: center; }
-.sf2-task-table td {
-  padding: 4px 8px;
-  border-top: 1px solid var(--border);
-  color: var(--text1);
-}
-.sf2-task-table td:first-child {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text1);
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-}
-.sf2-task-table td input {
-  width: 100%;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--text1);
-  padding: 4px 4px;
-  text-align: center;
-}
-.sf2-task-table td input:focus { background: rgba(59,130,246,0.08); border-radius: 3px; }
-.sf2-task-table tr:hover td { background: rgba(59,130,246,0.03); }
-.sf2-task-table tr:hover td:first-child { background: var(--bg2); }
-
-/* ── Bottom save bar ── */
-.sf2-footer {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 12px 24px;
-  background: var(--bg2);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-</style>`;
-
-    // ── Build form HTML ───────────────────────────────────────
-    var body = "";
-
-    // ── 1. Header Info ────────────────────────────────────────
-    body += sec("📋", "Header Information");
-    body += row2(
-      field("Master OR",        "master_or",       { req: true }),
-      field("Quote Number",     "quote_number",     { req: true })
+    // Header Information Card
+    var headerContent = row3(
+      field("Master OR",      "master_or",      { req: true }),
+      field("Quote Number",   "quote_number",   { req: true }),
+      field("Client PO#",     "client_po")
+    ) + row2(
+      field("Sales Engineer", "sales_engineer", { req: true }),
+      field("Sales Manager",  "sales_manager",  { req: true })
     );
-    body += row2(
-      field("Client PO#",       "client_po"),
-      field("Sales Engineer",   "sales_engineer",  { req: true })
-    );
-    body += row1(
-      field("Sales Manager",    "sales_manager",   { req: true })
-    );
+    var headerCard = card("📋", "Header Information", headerContent);
 
-    // ── 2. Project Details ────────────────────────────────────
-    body += sec("🏗", "Project Details");
-    body += row2(
-      field("PO Value (in lacs)", "po_value",      { req: true, type: "number" }),
-      field("Section",            "section",        { req: true, type: "dropdown" })
-    );
-    body += row1(
-      field("Customer Name",    "customer_name",   { req: true })
-    );
-    body += row2(
-      field("End Customer",     "end_customer"),
-      field("Consultant",       "consultant")
-    );
-    body += row1(
-      field("Project Description", "project_desc", { req: true })
-    );
-    body += row1(
-      field("Manufacturing Location", "mfg_loc",  { type: "dropdown" })
-    );
-
-    // ── 3. Efforts ────────────────────────────────────────────
-    body += sec("⚙", "Efforts");
-    body += row3(
-      field("HW Efforts",       "hw_efforts",      { req: true, type: "number" }),
-      field("SW Efforts",       "sw_efforts",      { req: true, type: "number" }),
-      field("Mfg Efforts",      "mfg_efforts",     { req: true, type: "number" })
-    );
-    body += row2(
-      field("No. of Std Panels", "std_panels",     { req: true, type: "number" }),
-      field("No. of Act Panels", "act_panels",     { req: true, type: "number" })
-    );
-
-    // ── 4. Dates — 3-column grid (label | cust date | PM auto) ──
-    body += sec("📅", "Dates");
-    body += '<div class="sf2-dates-grid">';
-    // header row
-    body += '<div class="sf2-dg-head">Milestone</div>';
-    body += '<div class="sf2-dg-head center accent-col">Customer Date</div>';
-    body += '<div class="sf2-dg-head center">PM Date</div>';
-    // date rows
+    // Dates Card
+    var datesContent = '<div class="sf2-dates-grid">';
+    datesContent += '<div class="sf2-dg-head">Milestone</div>';
+    datesContent += '<div class="sf2-dg-head center accent-col">Customer</div>';
+    datesContent += '<div class="sf2-dg-head center">PM</div>';
     var dateList = [
-      ["PO Date",    "po_date",   true],
-      ["OPF Recpt",  "opf_recpt", false],
-      ["HW Input",   "hw_input",  false],
-      ["Dwg. Sub.",  "dwg_sub",   false],
-      ["Dwg Appr",   "dwg_appr",  false],
-      ["HW FAT",     "hw_fat",    false],
-      ["Dispatch",   "dispatch",  false],
-      ["SW Input",   "sw_input",  false],
-      ["SW FAT",     "sw_fat",    false],
-      ["Install",    "install",   false],
-      ["PreComm.",   "precomm",   false],
-      ["Comm.",      "comm",      false],
+      ["PO Date",   "po_date",   true],
+      ["OPF Recpt", "opf_recpt", false],
+      ["HW Input",  "hw_input",  false],
+      ["Dwg. Sub.", "dwg_sub",   false],
+      ["Dwg Appr",  "dwg_appr",  false],
+      ["HW FAT",    "hw_fat",    false],
+      ["Dispatch",  "dispatch",  false],
+      ["SW Input",  "sw_input",  false],
+      ["SW FAT",    "sw_fat",    false],
+      ["Install",   "install",   false],
+      ["PreComm.",  "precomm",   false],
+      ["Comm.",     "comm",      false],
     ];
     dateList.forEach(function(dr) {
-      if (!has(dr[1]) && !dr[2]) return; // skip if not in fields and not required
-      body += '<div class="sf2-dg-lbl' + (dr[2] ? ' req' : '') + '">' + dr[0] + '</div>';
-      body += '<div class="sf2-dg-cell"><input type="date" name="' + dr[1] + '"></div>';
-      body += '<div class="sf2-dg-cell auto-cell">auto</div>';
+      if (!has(dr[1]) && !dr[2]) return;
+      datesContent += '<div class="sf2-dg-lbl' + (dr[2] ? ' req' : '') + '">' + dr[0] + '</div>';
+      datesContent += '<div class="sf2-dg-cell"><input type="date" name="' + dr[1] + '"></div>';
+      datesContent += '<div class="sf2-dg-cell auto-cell">auto</div>';
     });
-    body += '</div>';
+    datesContent += '</div>';
+    var datesCard = card("📅", "Dates", datesContent);
 
-    // ── 5. Stakeholders ───────────────────────────────────────
-    body += sec("👥", "Stakeholders");
+    // Project Details Card
+    var detailsContent = row3(
+      field("PO Value (lacs)",      "po_value",      { req: true, type: "number" }),
+      field("Section",               "section",        { req: true, type: "dropdown" }),
+      field("Mfg. Location",         "mfg_loc",        { type: "dropdown" })
+    ) + row3(
+      field("Customer Name",         "customer_name",  { req: true }),
+      field("End Customer",          "end_customer"),
+      field("Consultant",            "consultant")
+    ) + row1(
+      field("Project Description",   "project_desc",   { req: true })
+    );
+    var detailsCard = card("🏗", "Project Details", detailsContent);
+
+    // Stakeholders Card
+    var shContent = '<div class="sf2-sh-grid">';
     var shList = [
-      ["Sales", "sh_sales"], ["MFG",   "sh_mfg"],
-      ["HW",    "sh_hw"],    ["E&C",   "sh_ec"],
-      ["SW",    "sh_sw"],    ["A/C",   "sh_ac"],
+      ["Sales", "sh_sales"], ["MFG", "sh_mfg"],
+      ["HW",    "sh_hw"],    ["E&C", "sh_ec"],
+      ["SW",    "sh_sw"],    ["A/C", "sh_ac"],
       ["BYR",   "sh_byr"],
     ];
-    body += '<div class="sf2-sh-grid">';
-    shList.forEach(function(sh) {
-      body += field(sh[0], sh[1]);
-    });
-    body += '</div>';
-
-    // ── 6. Actuals ────────────────────────────────────────────
-    body += sec("📊", "Actuals");
-    body += row2(
-      field("Est. VA%",        "est_va_pct",  { type: "number" }),
-      field("Est. VA",         "est_va",      { type: "number" })
-    );
-    body += row2(
-      field("Est. SM%",        "est_sm_pct",  { type: "number" }),
-      field("Est. SM",         "est_sm",      { type: "number" })
-    );
-    body += row2(
-      field("Act. VA%",        "act_va_pct",  { type: "number" }),
-      field("Act. VA",         "act_va",      { type: "number" })
-    );
-    body += row2(
-      field("Act. SM%",        "act_sm_pct",  { type: "number" }),
-      field("Act. SM",         "act_sm",      { type: "number" })
-    );
-    body += row2(
-      field("Balance Panels",  "balance_panels", { type: "number" }),
-      field("Panel Disp Act",  "panel_disp_act", { type: "number" })
-    );
-    body += row1(
-      field("Reason / Remark", "reason_remark")
-    );
-
-    // ── 7. LD Details ─────────────────────────────────────────
-    var hasLD = has("ld_date") || has("ld_maxwk") || has("ld_maxov") || has("ld_remarks");
-    if (hasLD) {
-      body += sec("⚠", "LD Details");
-      body += row2(
-        field("LD Date",      "ld_date",    { type: "date" }),
-        field("LD Max/Wk %",  "ld_maxwk",  { type: "number" })
-      );
-      body += row2(
-        field("LD Max/OV %",  "ld_maxov",  { type: "number" }),
-        field("LD Remarks",   "ld_remarks")
-      );
-    }
-
-    // ── 8. Warranty ───────────────────────────────────────────
-    if (has("warranty")) {
-      body += sec("🛡", "Warranty");
-      body += row1(field("Warranty Terms", "warranty"));
-    }
-
-    // ── 9. Scope ──────────────────────────────────────────────
+    shList.forEach(function(sh) { shContent += field(sh[0], sh[1]); });
+    shContent += '</div>';
+    // Add Scope checkboxes below stakeholders
     var scopeList = ["scope_hw", "scope_sw", "scope_mfg", "scope_inst", "scope_com"];
     var scopeLabels = { scope_hw: "HW", scope_sw: "SW", scope_mfg: "MFG", scope_inst: "Inst", scope_com: "Com" };
     var hasScope = scopeList.some(function(f) { return has(f); });
+
     if (hasScope) {
-      body += sec("🔍", "Scope");
-      body += '<div class="sf2-scope-row">';
+      shContent += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
+      shContent += '<div class="sf2-label" style="margin-bottom:8px;">Scope</div>';
+      shContent += '<div class="sf2-scope-row">';
       scopeList.forEach(function(f) {
         if (!has(f)) return;
-        body += '<label class="sf2-scope-item">'
-          + '<input type="checkbox" name="' + f + '" value="1"> '
-          + scopeLabels[f] + '</label>';
+        shContent += '<label class="sf2-scope-item">'
+          + '<input type="checkbox" name="' + f + '" value="1"> ' + scopeLabels[f] + '</label>';
       });
-      body += '</div>';
+      shContent += '</div></div>';
     }
+    var stakeholdersCard = card("👥", "Stakeholders & Scope", shContent);
 
-    // ── 10. Lead Times ────────────────────────────────────────
+    // Efforts Card
+    var effortsContent = row3(
+      field("HW Efforts",       "hw_efforts",  { req: true, type: "number" }),
+      field("SW Efforts",       "sw_efforts",  { req: true, type: "number" }),
+      field("Mfg Efforts",      "mfg_efforts", { req: true, type: "number" })
+    ) + row2(
+      field("No. of Std Panels", "std_panels", { req: true, type: "number" }),
+      field("No. of Act Panels", "act_panels", { req: true, type: "number" })
+    );
+
+    // Add Critical Lead Time, Normal Lead Time, and Warranty below
+    var extraEffortsContent = '';
+
     if (has("critical_lead_time") || has("normal_lead_time")) {
-      body += sec("⏱", "Lead Times");
-      body += row2(
+      extraEffortsContent += row2(
         field("Critical Lead Time", "critical_lead_time", { type: "number" }),
         field("Normal Lead Time",   "normal_lead_time",   { type: "number" })
       );
     }
 
-    // ── 11. Task-Specific Fields ──────────────────────────────
+    if (has("warranty")) {
+      extraEffortsContent += row1(field("Warranty Terms", "warranty"));
+    }
+
+    if (extraEffortsContent) {
+      effortsContent += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' 
+        + extraEffortsContent + '</div>';
+    }
+
+    var effortsCard = card("⚙", "Efforts", effortsContent);
+    var effortsCard = card("⚙", "Efforts", effortsContent);
+
+    // Actuals Card (Full Width)
+    var actualsContent = '';
+    var hasActuals = has("est_va_pct") || has("est_va") || has("est_sm_pct") || has("est_sm")
+                  || has("act_va_pct") || has("act_va") || has("act_sm_pct") || has("act_sm");
+    if (hasActuals) {
+      actualsContent += '<table class="sf2-actuals-table">';
+      actualsContent += '<thead><tr><th></th><th>VA %</th><th>VA</th><th>SM %</th><th>SM</th></tr></thead><tbody>';
+      
+      function actualsCell(name) {
+        if (!has(name)) return '<td></td>';
+        return '<td><input type="number" step="any" name="' + name + '" placeholder="0"></td>';
+      }
+      
+      actualsContent += '<tr><td>Estimated</td>' + actualsCell("est_va_pct") + actualsCell("est_va") + actualsCell("est_sm_pct") + actualsCell("est_sm") + '</tr>';
+      actualsContent += '<tr><td>Actual</td>' + actualsCell("act_va_pct") + actualsCell("act_va") + actualsCell("act_sm_pct") + actualsCell("act_sm") + '</tr>';
+      actualsContent += '</tbody></table>';
+      
+      actualsContent += row2(
+        field("Balance Panels",  "balance_panels", { type: "number" }),
+        field("Panel Disp Act",  "panel_disp_act", { type: "number" })
+      );
+      actualsContent += row1(field("Reason / Remark", "reason_remark"));
+    }
+    var actualsCard = hasActuals ? card("📊", "Actuals", actualsContent, true) : '';
+
+    // LD Details Card (Full Width)
+    var ldContent = '';
+    var hasLD = has("ld_date") || has("ld_maxwk") || has("ld_maxov") || has("ld_remarks");
+    if (hasLD) {
+      ldContent = row4(
+        field("LD Date",     "ld_date",    { type: "date" }),
+        field("LD Max/Wk %", "ld_maxwk",  { type: "number" }),
+        field("LD Max/OV %", "ld_maxov",  { type: "number" }),
+        field("LD Remarks",  "ld_remarks")
+      );
+    }
+    var ldCard = hasLD ? card("⚠", "LD Details", ldContent, true) : '';
+
+    // Task-Specific Fields Card (Full Width)
+    var taskContent = '';
     var taskRows = {};
     Object.keys(fields).forEach(function(key) {
       var cfg = fields[key];
       if (!cfg || !cfg.task_row) return;
       var r = cfg.task_row;
-      if (!taskRows[r]) {
-        taskRows[r] = { s: null, u: null, ad: null, name: taskNames[r] || ("Task " + r) };
-      }
-      // Avoid matching "sh_*", "sw_*", "std_*", "sc_*" as task 's' fields
+      if (!taskRows[r]) taskRows[r] = { s: null, u: null, ad: null, name: taskNames[r] || ("Task " + r) };
       if (key.match(/^s\d/) || key === "s")  taskRows[r].s  = key;
       if (key.match(/^u\d/) || key === "u")  taskRows[r].u  = key;
       if (key.match(/^ad/))                  taskRows[r].ad = key;
     });
-
-    var sortedTaskRows = Object.keys(taskRows).sort(function(a, b) {
-      return parseInt(a) - parseInt(b);
-    });
+    var sortedTaskRows = Object.keys(taskRows).sort(function(a, b) { return parseInt(a) - parseInt(b); });
 
     if (sortedTaskRows.length > 0) {
-      body += sec("📝", "Task-Specific Fields");
-      body += '<table class="sf2-task-table">';
-      body += '<thead><tr>'
-        + '<th style="width:40%">Task Description</th>'
-        + '<th style="width:20%">Lead Time (S)</th>'
-        + '<th style="width:20%">Effort Days (U)</th>'
+      taskContent += '<table class="sf2-task-table">';
+      taskContent += '<thead><tr>'
+        + '<th style="width:44%">Task</th>'
+        + '<th style="width:18%">Lead Time (S)</th>'
+        + '<th style="width:18%">Effort Days (U)</th>'
         + '<th style="width:20%">Payment % (AD)</th>'
         + '</tr></thead><tbody>';
-
+      
       sortedTaskRows.forEach(function(rn) {
         var tk = taskRows[rn];
-        body += '<tr>'
+        
+        function taskCell(fieldKey) {
+          if (!fieldKey) {
+            return '<td class="task-cell-disabled"></td>';
+          } else {
+            return '<td><input type="number" step="any" name="' + fieldKey + '" placeholder="" style="text-align:center;"></td>';
+          }
+        }
+        
+        taskContent += '<tr>'
           + '<td>' + h(tk.name) + '</td>'
-          + '<td><input type="number" step="any" name="' + (tk.s  || "") + '" placeholder="—" ' + (tk.s  ? '' : 'disabled') + '></td>'
-          + '<td><input type="number" step="any" name="' + (tk.u  || "") + '" placeholder="—" ' + (tk.u  ? '' : 'disabled') + '></td>'
-          + '<td><input type="number" step="any" name="' + (tk.ad || "") + '" placeholder="—" ' + (tk.ad ? '' : 'disabled') + '></td>'
+          + taskCell(tk.s)
+          + taskCell(tk.u)
+          + taskCell(tk.ad)
           + '</tr>';
       });
-
-      body += '</tbody></table>';
+      taskContent += '</tbody></table>';
     }
+    var tasksCard = sortedTaskRows.length > 0 ? card("📝", "Task-Specific Fields", taskContent, true) : '';
 
-    // ── Assemble ──────────────────────────────────────────────
-    var html = css + [
+    // ── Assemble the layout ────────────────────────────────────
+    var html = [
       '<div class="sf2-wrap">',
         '<div class="sf2-topbar">',
           '<div class="sf2-topbar-left">',
@@ -1649,7 +1343,20 @@ textarea.sf2-input {
         '</div>',
         '<div class="sf2-body">',
           '<form id="project-setup-form">',
-            body,
+            '<div class="sf2-layout-columns">',
+              '<div class="sf2-col-left">',
+                headerCard,
+                detailsCard,
+                effortsCard,
+              '</div>',
+              '<div class="sf2-col-right">',
+                datesCard,
+                stakeholdersCard,
+              '</div>',
+            '</div>',
+            actualsCard,
+            ldCard,
+            tasksCard,
           '</form>',
         '</div>',
       '</div>',
@@ -1666,7 +1373,7 @@ textarea.sf2-input {
         var el = els[i];
         if (!el.name || el.disabled) continue;
         if (el.type === "checkbox") {
-          formData[el.name] = el.checked ? el.value : "";
+          formData[el.name] = el.checked ? "1" : "";
         } else {
           formData[el.name] = el.value;
         }
@@ -1677,27 +1384,18 @@ textarea.sf2-input {
         var res = await API.req("POST", "/projects/" + pid + "/setup", formData);
         if (res.success) {
           toast("Project setup completed!");
-
-          // Patch in-memory master list directly — don't clear cache
           if (window._masterListFull) {
             window._masterListFull.forEach(function(m) {
-              if (m.file_id === pid || m.project_id === pid) {
-                m.da_status = "CONFIGURED";
-              }
+              if (m.file_id === pid || m.project_id === pid) m.da_status = "CONFIGURED";
             });
           }
           if (window._masterList) {
             window._masterList.forEach(function(m) {
-              if (m.file_id === pid || m.project_id === pid) {
-                m.da_status = "CONFIGURED";
-              }
+              if (m.file_id === pid || m.project_id === pid) m.da_status = "CONFIGURED";
             });
           }
-
-          // Re-render sidebar with patched data
           var searchTerm = document.getElementById("master-search-input")?.value || "";
           filterMasterList(searchTerm);
-
           openProject(pid);
         } else {
           toast(res.message || "Save failed", "error");

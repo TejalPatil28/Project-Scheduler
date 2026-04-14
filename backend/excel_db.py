@@ -17,6 +17,71 @@ except ImportError:
     PY_CEL_AVAILABLE = False
     print("PyCel not installed, falling back to openpyxl only")
 
+# ===== TOP OF excel_db.py (after imports, before any functions) =====
+def _patch_pycel_globals():
+    """
+    Inject COUNTA and PRODUCT into pycel.excellib BEFORE ExcelCompiler() runs.
+    pycel's load_functions() uses getattr(module, name) across default_modules,
+    and pycel.excellib is first in that list — so this is where to inject.
+    Must be called at module load time, not after ExcelCompiler() is instantiated.
+    """
+    if not PY_CEL_AVAILABLE:
+        return
+    try:
+        import pycel.excellib as excellib
+
+        def counta_func(*args):
+            count = 0
+            for arg in args:
+                if arg is None:
+                    continue
+                if isinstance(arg, (list, tuple)):
+                    for item in arg:
+                        if item is not None and str(item).strip() != "":
+                            count += 1
+                else:
+                    if str(arg).strip() != "":
+                        count += 1
+            return count
+
+        def product_func(*args):
+            result = 1
+            has_numbers = False
+            for arg in args:
+                if arg is None:
+                    continue
+                if isinstance(arg, (list, tuple)):
+                    for item in arg:
+                        if item is not None:
+                            try:
+                                result *= float(item)
+                                has_numbers = True
+                            except (ValueError, TypeError):
+                                pass
+                else:
+                    try:
+                        result *= float(arg)
+                        has_numbers = True
+                    except (ValueError, TypeError):
+                        pass
+            return result if has_numbers else 0
+
+        setattr(excellib, 'COUNTA', counta_func)
+        setattr(excellib, 'PRODUCT', product_func)
+        setattr(excellib, 'counta', counta_func)
+        setattr(excellib, 'product', product_func)
+
+        # Verify it landed
+        assert getattr(excellib, 'counta', None) is counta_func
+        assert getattr(excellib, 'product', None) is product_func
+        print("[PyCel] COUNTA and PRODUCT patched into pycel.excellib successfully")
+
+    except Exception as e:
+        print(f"[PyCel] Global patch failed: {e}")
+
+# Run once at module load — BEFORE any ExcelCompiler() is ever called
+_patch_pycel_globals()
+
 def safe_load_workbook(filepath, data_only=True):
     """Safely load an Excel workbook with error handling for corrupted files"""
     import os
@@ -1426,48 +1491,12 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
     max_col = min(ws.max_column, max_col)
     cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
 
-        # Initialize PyCel for formula evaluation
+    # Initialize PyCel for formula evaluation
     excel_compiler = None
     if PY_CEL_AVAILABLE:
         try:
             excel_compiler = ExcelCompiler(filepath)
             print("PyCel initialized for formula evaluation")
-                
-                # Register missing COUNTA function
-            def counta_func(*args):
-                """Count non-empty values in the provided arguments/ranges"""
-                count = 0
-                for arg in args:
-                    if arg is None:
-                        continue
-                    if isinstance(arg, (list, tuple)):
-                        for item in arg:
-                            if item is not None and str(item).strip() != "":
-                                count += 1
-                    else:
-                        if str(arg).strip() != "":
-                            count += 1
-                return count
-                
-                # Register missing PRODUCT function
-            def product_func(*args):
-                """Multiply all provided numbers"""
-                result = 1
-                for arg in args:
-                    if arg is None:
-                        continue
-                    if isinstance(arg, (list, tuple)):
-                        for item in arg:
-                            if item is not None and isinstance(item, (int, float)):
-                                result *= item
-                    elif isinstance(arg, (int, float)):
-                        result *= arg
-                return result
-                
-            excel_compiler.functions['COUNTA'] = counta_func
-            excel_compiler.functions['PRODUCT'] = product_func
-            print("Registered COUNTA and PRODUCT functions")
-                
         except Exception as e:
             print(f"PyCel initialization failed: {e}, falling back to openpyxl only")
             excel_compiler = None
@@ -2091,53 +2120,14 @@ def generate_sysmemory_json(filepath, project_id, sched_cache=None):
     # Header columns for rows 1-7 (DE and DF)
     header_cols_1_7 = ["DE", "DF"]
     
-    # Initialize PyCel for formula evaluation
+    # Initialize PyCel for CY-DJ formula evaluation only
     excel_compiler = None
     if PY_CEL_AVAILABLE:
         try:
             excel_compiler = ExcelCompiler(filepath)
-            print("PyCel initialized for formula evaluation")
-            
-            # Register missing COUNTA function
-            def counta_func(*args):
-                """Count non-empty values in the provided arguments/ranges"""
-                count = 0
-                for arg in args:
-                    if arg is None:
-                        continue
-                    if isinstance(arg, (list, tuple)):
-                        for item in arg:
-                            if item is not None and str(item).strip() != "":
-                                count += 1
-                    else:
-                        if str(arg).strip() != "":
-                            count += 1
-                return count
-            
-            # Register missing PRODUCT function
-            def product_func(*args):
-                """Multiply all provided numbers"""
-                result = 1
-                for arg in args:
-                    if arg is None:
-                        continue
-                    if isinstance(arg, (list, tuple)):
-                        for item in arg:
-                            if item is not None and isinstance(item, (int, float)):
-                                result *= item
-                    elif isinstance(arg, (int, float)):
-                        result *= arg
-                return result
-            
-            excel_compiler.functions['COUNTA'] = counta_func
-            excel_compiler.functions['PRODUCT'] = product_func
-            print("Registered COUNTA and PRODUCT functions")
-            
+            print(f"PyCel initialized for system memory generation: {project_id}")
         except Exception as e:
-            print(f"PyCel initialization failed: {e}, falling back to openpyxl only")
-            excel_compiler = None
-    else:
-        print("PyCel not available, using openpyxl only")
+            print(f"PyCel initialization failed: {e}")
     
     # Prepare system memory data
     sysmemory_data = {
@@ -3166,6 +3156,8 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
     from datetime import datetime
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
+    from openpyxl.styles.numbers import is_date_format
+    from openpyxl.utils.datetime import from_excel
     
     department = "PM"
     cfg = DEPT_CONFIG[department]
@@ -3192,10 +3184,27 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
     # Write to schedule Excel cells
     wb = load_workbook(file_path)
     ws = wb.active
+    
+    # ========== FIX DATE CELLS BEFORE SAVING ==========
+    for row in ws.iter_rows():
+        for cell in row:
+            # Check if cell has a value and is an integer/float
+            if cell.value is not None and isinstance(cell.value, (int, float)):
+                # Check if it's a date-formatted cell
+                if cell.number_format and is_date_format(cell.number_format):
+                    # Convert Excel serial to proper datetime
+                    if 1 <= cell.value <= 2958465:
+                        try:
+                            cell.value = from_excel(cell.value)
+                        except Exception:
+                            pass
+    # ==================================================
+    
     ws['D1'] = or_number
     ws['D14'] = section
     ws['D9'] = float(ov_value)
     wb.save(file_path)
+    wb.close()
     
     # Append new row to monitor JSON
     monitor_cache_path = os.path.join(get_cache_path(department, "Monitoring"), f"{department}_Monitor.json")
@@ -3211,28 +3220,21 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
         new_row = max_row + 1
         
         # Set values for new row
-        cells[f"{cfg['file_col']}{new_row}"] = {'v': file_name.replace('.xlsx', '')}  # Column B
-        cells[f"{cfg['head_col']}{new_row}"] = {'v': assign_to.upper()}  # Column C
-        cells[f"G{new_row}"] = {'v': or_number}  # Column G = original OR number
-        cells[f"H{new_row}"] = {'v': section}  # Column H = section
+        cells[f"{cfg['file_col']}{new_row}"] = {'v': file_name.replace('.xlsx', '')}
+        cells[f"{cfg['head_col']}{new_row}"] = {'v': assign_to.upper()}
+        cells[f"G{new_row}"] = {'v': or_number}
+        cells[f"H{new_row}"] = {'v': section}
 
-        # Column E = normalized: replace / with _ and append _section
         normalized = or_number + "_" + section
         cells[f"E{new_row}"] = {'v': normalized}
-
-        cells[f"K{new_row}"] = {'v': float(ov_value)}  # Column K = OV Value
-
-        # ADD THIS: Mark as NEW project
+        cells[f"K{new_row}"] = {'v': float(ov_value)}
         cells[f"DA{new_row}"] = {'v': 'NEW'}
         
-        # Update max_row
         monitor_data['max_row'] = new_row
         
-        # Write back
         with open(monitor_cache_path, 'w') as f:
             json.dump(monitor_data, f, indent=2)
 
-        # Clear in-memory cache so project appears immediately in sidebar
         try:
             import sys
             if 'app' in sys.modules:
@@ -3244,6 +3246,484 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
             print(f"[Cache] Could not clear master cache: {e}")
     
     return {'success': True, 'file_name': file_name, 'project_id': file_name.replace('.xlsx', '')}
+
+def _generate_cache_with_pycel(project_id, file_path, sched_cache=None, role=None):
+    """
+    Generate the sheet JSON cache after a setup save, using PyCel to evaluate
+    formula cells and openpyxl (data_only=True) for plain cell values.
+
+    This is called instead of get_raw_sheet() after write_project_setup_data()
+    saves the Excel file, because get_raw_sheet() opens with data_only=False
+    which returns raw formula strings instead of computed values.
+
+    Two workbook handles are used from the same already-saved file:
+      - wb_vals : data_only=True  → correct plain cell values + formatting
+      - wb_fmt  : data_only=False → correct data_type flags for formula detection
+    PyCel compiles the formula graph from the saved file, so it sees the
+    newly written form values when evaluating dependent formulas.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter as gcl
+
+    if not PY_CEL_AVAILABLE:
+        print("[SetupCache] PyCel not available, falling back to get_raw_sheet")
+        return get_raw_sheet(file_path, sched_cache=sched_cache, role=role)
+
+    dept = ROLE_TO_DEPT.get(role, "SW") if role else detect_dept_from_path(file_path)
+    cfg  = DEPT_CONFIG.get(dept, DEPT_CONFIG["SW"])
+    date_rows = cfg.get("date_rows", [28, 29, 30, 31, 32, 33])
+
+    # ── Two workbook handles ───────────────────────────────────
+    # wb_vals: plain values + formatting (data_only=True)
+    # wb_fmt:  formula strings + data_type flags (data_only=False)
+    wb_vals = load_workbook(file_path, data_only=True)
+    wb_fmt  = load_workbook(file_path, data_only=False)
+    ws_vals = wb_vals.active
+    ws_fmt  = wb_fmt.active
+    sheet_name = ws_fmt.title
+
+    # ── PyCel compiler ─────────────────────────────────────────
+    excel = None
+    try:
+        excel = ExcelCompiler(file_path)
+        print(f"[SetupCache] PyCel compiled successfully for {file_path}")
+    except Exception as e:
+        print(f"[SetupCache] PyCel compile failed ({e}), all cells will use data_only values")
+        excel = None
+
+    max_row = ws_vals.max_row
+    max_col = min(ws_vals.max_column, 32)
+    cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A", "B", "C", "D")]
+
+    # ── Helpers ────────────────────────────────────────────────
+    def _resolve_color(color):
+        try:
+            if color is None:
+                return None
+            if color.type == "rgb":
+                rgb = color.rgb
+                if rgb and rgb != "00000000":
+                    return f"#{rgb[2:]}"
+            return None
+        except Exception:
+            return None
+
+    def _eval_cell(coord):
+        """
+        Evaluate a cell. Uses PyCel for formula cells, wb_vals for plain cells.
+        Silently falls back to wb_vals value on any PyCel error.
+        """
+        cell_fmt  = ws_fmt[coord]
+        cell_vals = ws_vals[coord]
+        fmt = cell_fmt.number_format or ""
+
+        # Determine if it's a formula
+        is_formula = (cell_fmt.data_type == "f") or (
+            isinstance(cell_fmt.value, str) and cell_fmt.value.startswith("=")
+        )
+
+        v = None
+        if is_formula and excel is not None:
+            try:
+                v = excel.evaluate(f"{sheet_name}!{coord}")
+            except Exception:
+                # Silently fall back to cached value
+                v = cell_vals.value if cell_vals else None
+        else:
+            v = cell_vals.value if cell_vals else ""
+        
+        # If still None, use empty string (not formula text)
+        if v is None:
+            v = ""
+
+        # ── Type normalisations ────────────────────────────────
+        if isinstance(v, (datetime, date)):
+            d = v.date() if isinstance(v, datetime) else v
+            return d.strftime("%d-%b-%y").upper() 
+
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            # Excel date serial check
+            if 30000 <= v <= 100000 and any(
+                p in fmt.lower() for p in ["yy", "mm", "dd", "mmm"]
+            ):
+                try:
+                    from openpyxl.utils.datetime import from_excel
+                    return from_excel(int(v)).strftime("%d-%b-%y").upper()  # 16-JUN-26
+                except Exception:
+                    pass
+            if "%" in fmt:
+                return f"{int(round(float(v) * 100))}%"
+            if fmt == "00":
+                return f"{int(v):02d}"
+            if fmt == "0.0":
+                return f"{float(v):.1f}"
+            if fmt == "0.00":
+                return f"{float(v):.2f}"
+
+        if v is not None and not isinstance(v, (int, float, bool, str)):
+            v = str(v)
+
+        return v
+
+    def _plain_val(ref):
+        """Read a plain string value from ws_vals, no formula evaluation."""
+        v = ws_vals[ref].value
+        return str(v).strip() if v else ""
+
+    def _date_val(ref):
+        """Read a date cell, evaluating via PyCel if it is a formula."""
+        v = _eval_cell(ref)
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v  # already formatted by _eval_cell
+        if isinstance(v, (int, float)) and 30000 <= v <= 100000:
+            try:
+                from openpyxl.utils.datetime import from_excel
+                return from_excel(int(v)).strftime("%d %b %Y")
+            except Exception:
+                pass
+        if isinstance(v, (datetime, date)):
+            d = v.date() if isinstance(v, datetime) else v
+            return d.strftime("%d %b %Y")
+        return str(v).strip() if v else ""
+
+    # ── Merged cells (from ws_fmt) ─────────────────────────────
+    merged_map = {}
+    for mc in ws_fmt.merged_cells.ranges:
+        master = f"{gcl(mc.min_col)}{mc.min_row}"
+        rs = mc.max_row - mc.min_row + 1
+        cs = mc.max_col - mc.min_col + 1
+        for r in range(mc.min_row, mc.max_row + 1):
+            for c in range(mc.min_col, mc.max_col + 1):
+                coord = f"{gcl(c)}{r}"
+                if coord == master:
+                    merged_map[coord] = {"master": True, "rowspan": rs, "colspan": cs}
+                else:
+                    merged_map[coord] = {"skip": True}
+
+    # ── Column widths + hidden + outline ──────────────────────
+    DEFAULT_COL_WIDTH = getattr(ws_fmt.sheet_format, "defaultColWidth", None) or 0.88
+    col_widths  = {}
+    col_hidden  = {}
+    col_outline = {}
+    for col in cols:
+        cd = ws_fmt.column_dimensions.get(col)
+        if cd is None:
+            col_widths[col]  = max(30, round((DEFAULT_COL_WIDTH or 8) * 7.5))
+            col_hidden[col]  = DEFAULT_COL_WIDTH < 2.0
+            col_outline[col] = 0
+        else:
+            col_widths[col]  = max(30, round((cd.width or 8) * 7.5))
+            col_hidden[col]  = bool(cd.hidden) and int(cd.outline_level or 0) > 0
+            col_outline[col] = int(cd.outline_level or 0)
+
+    _col_overrides = {"B": 0.90, "C": 0.80, "D": 0.35, "I": 0.60, "V": 0.90, "W": 0.90}
+    for _col, _factor in _col_overrides.items():
+        if _col in col_widths:
+            col_widths[_col] = max(30, round(col_widths[_col] * _factor))
+
+    # ── col_groups ────────────────────────────────────────────
+    col_groups = []
+    try:
+        i = 0
+        while i < len(cols):
+            col = cols[i]
+            cd_check = ws_fmt.column_dimensions.get(col)
+            is_grouped = col_outline.get(col, 0) > 0 or (
+                cd_check is None and DEFAULT_COL_WIDTH < 2.0
+            )
+            if is_grouped:
+                group_cols = [col]
+                j = i + 1
+                while j < len(cols):
+                    next_col = cols[j]
+                    cd_next  = ws_fmt.column_dimensions.get(next_col)
+                    next_grouped = col_outline.get(next_col, 0) > 0 or (
+                        cd_next is None and DEFAULT_COL_WIDTH < 2.0
+                    )
+                    if next_grouped:
+                        group_cols.append(next_col)
+                        j += 1
+                    else:
+                        break
+                if group_cols[0] == "J" and "Q" in group_cols:
+                    group_cols = group_cols[: group_cols.index("Q")]
+                if group_cols[0] == "X" and "AB" in cols and "AB" not in group_cols:
+                    last_idx = col2idx(group_cols[-1])
+                    ab_idx   = col2idx("AB")
+                    for extra_i in range(last_idx + 1, ab_idx + 1):
+                        extra_col = gcl(extra_i)
+                        if extra_col in cols and extra_col not in group_cols:
+                            group_cols.append(extra_col)
+                col_groups.append({
+                    "cols":      group_cols,
+                    "level":     1,
+                    "collapsed": all(col_hidden.get(c, False) for c in group_cols),
+                })
+                i = j
+            else:
+                i += 1
+    except Exception:
+        col_groups = []
+
+    # ── Row heights ───────────────────────────────────────────
+    row_heights = {}
+    for rn in range(1, max_row + 1):
+        rd = ws_fmt.row_dimensions.get(rn)
+        row_heights[str(rn)] = max(18, round((rd.height or 15) * 1.33)) if rd else 20
+
+    # ── Cells ─────────────────────────────────────────────────
+    cells = {}
+    for row in ws_fmt.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
+        for cell_fmt in row:
+            coord = cell_fmt.coordinate
+            mi    = merged_map.get(coord, {})
+
+            if mi.get("skip"):
+                cells[coord] = {"skip": True}
+                continue
+
+            v = _eval_cell(coord)
+            c = {"v": v}
+
+            if mi.get("master"):
+                if mi["rowspan"] > 1: c["rowspan"] = mi["rowspan"]
+                if mi["colspan"] > 1: c["colspan"] = mi["colspan"]
+
+            try:
+                f = ws_vals[coord].font
+                font = {}
+                if f.bold: font["bold"] = True
+                if f.size and f.size != 11: font["size"] = f.size
+                if font: c["font"] = font
+            except Exception:
+                pass
+
+            try:
+                fill = ws_vals[coord].fill
+                if fill and fill.patternType not in (None, "none"):
+                    fg = _resolve_color(fill.fgColor)
+                    if fg and fg != "#FFFFFF": c["fill"] = fg
+            except Exception:
+                pass
+
+            cells[coord] = c
+
+    # ── Editable cells ────────────────────────────────────────
+    TASK_START_ROW = 9
+    EDITABLE_COLS  = cfg.get("editable_cols", {"X", "Y", "Z", "AD", "AF"})
+    editable_fill  = None
+    editable_theme = None
+    editable_tint  = None
+    TINT_TOLERANCE = 0.001
+
+    try:
+        ref = ws_vals[f"X{TASK_START_ROW}"]
+        fg  = ref.fill.fgColor
+        if ref.fill.patternType == "solid" and fg.type == "theme":
+            editable_theme = fg.theme
+            editable_tint  = fg.tint
+            editable_fill  = "#BDD7EE"
+    except Exception:
+        pass
+
+    def _is_editable_fill(cell):
+        if editable_theme is None:
+            return False
+        try:
+            fg = cell.fill.fgColor
+            return (
+                cell.fill.patternType == "solid"
+                and fg.type == "theme"
+                and fg.theme == editable_theme
+                and abs(fg.tint - editable_tint) < TINT_TOLERANCE
+            )
+        except Exception:
+            return False
+
+    for row in ws_vals.iter_rows(min_row=TASK_START_ROW, max_row=max_row):
+        for cell in row:
+            try:
+                col_letter = cell.column_letter
+            except AttributeError:
+                continue
+            if col_letter not in EDITABLE_COLS:
+                continue
+            coord = cell.coordinate
+            if coord not in cells or cells[coord].get("skip"):
+                continue
+
+            is_always_editable = col_letter in ("X", "Y", "Z", "AF")
+            if is_always_editable or _is_editable_fill(cell):
+                if col_letter == "AD":
+                    AD_COLORS = {
+                        "engineering":        "#ffb3b3",
+                        "purchase":           "#5f933c",
+                        "software":           "#0096cc",
+                        "project management": "#005fa3",
+                        "manufacturing":      "#2f491e",
+                        "sales":              "#00d9d9",
+                        "client":             "#6d006d",
+                    }
+                    val = cell.value
+                    if val:
+                        color = AD_COLORS.get(str(val).strip().lower())
+                        if color:
+                            cells[coord]["fill"] = color
+                            dark_bgs = {"#5f933c", "#0096cc", "#005fa3", "#2f491e", "#6d006d"}
+                            cells[coord]["font"] = cells[coord].get("font", {})
+                            cells[coord]["font"]["color"] = "#ffffff" if color in dark_bgs else "#000000"
+                    z_coord = f"Z{cell.row}"
+                    z_val   = ws_vals[z_coord].value
+                    z_pct   = 0
+                    try:
+                        if z_val is not None:
+                            z_pct = float(z_val)
+                            if z_pct <= 1.0:
+                                z_pct *= 100
+                    except (TypeError, ValueError):
+                        z_pct = 0
+                    if z_pct < 100:
+                        cells[coord]["editable"]     = True
+                        cells[coord]["editable_col"] = col_letter
+                else:
+                    cells[coord]["editable"]     = True
+                    cells[coord]["editable_col"] = col_letter
+
+    # ── project_banner ────────────────────────────────────────
+    w2_val = _date_val("W2") or _date_val("X9")
+    project_banner = {
+        "or_number":      _plain_val("D1"),
+        "section":        _plain_val("D7"),
+        "sales_engineer": _plain_val("I2"),
+        "sales_manager":  _plain_val("I3"),
+        "customer_name":  _plain_val("D10"),
+        "start_date_lbl": _plain_val("W1"),
+        "start_date_val": w2_val,
+        "days_swe_lbl":   _plain_val("AB1"),
+        "days_swe_val":   _plain_val("AB2"),
+        "ld_date_lbl":    _plain_val("AE1"),
+        "ld_date_val":    _plain_val("AF1"),
+        "ld_maxwk_lbl":   _plain_val("AE2"),
+        "ld_maxwk_val":   _plain_val("AF2"),
+        "ld_maxov_lbl":   _plain_val("AE3"),
+        "ld_maxov_val":   _plain_val("AF3"),
+        "ld_remarks_lbl": _plain_val("AE4"),
+        "ld_remarks_val": _plain_val("AF4"),
+    }
+
+    # ── left_panel ────────────────────────────────────────────
+    dates_list = []
+    for row_num in date_rows:
+        dates_list.append({
+            "label":    _plain_val(f"B{row_num}") or f"B{row_num}",
+            "pm":       _date_val(f"C{row_num}"),
+            "swe":      _date_val(f"D{row_num}"),
+            "pm_fill":  _resolve_color(ws_vals[f"C{row_num}"].fill.fgColor)
+                        if ws_vals[f"C{row_num}"].fill.patternType not in (None, "none") else None,
+            "pm_font":  _resolve_color(ws_vals[f"C{row_num}"].font.color),
+            "swe_fill": _resolve_color(ws_vals[f"D{row_num}"].fill.fgColor)
+                        if ws_vals[f"D{row_num}"].fill.patternType not in (None, "none") else None,
+            "swe_font": _resolve_color(ws_vals[f"D{row_num}"].font.color),
+        })
+
+    left_panel = {
+        "project_info": [
+            {"label": _plain_val("C9")  or "PO Value",      "value": str(_plain_val("D9") or "")},
+            {"label": _plain_val("C10") or "Customer",      "value": _plain_val("D10")},
+            {"label": _plain_val("C11") or "End Customer",  "value": _plain_val("D11")},
+            {"label": _plain_val("C12") or "Consultant",    "value": _plain_val("D12")},
+            {"label": _plain_val("C13") or "Project Desc.", "value": _plain_val("D13")},
+            {"label": _plain_val("C14") or "Section",       "value": _plain_val("D14")},
+            {"label": _plain_val("C17") or "SW Efforts",    "value": str(_plain_val("D17") or "")},
+        ],
+        "dates": dates_list,
+        "warranty": [
+            {"label": _plain_val("AE6") or "Warranty", "value": _plain_val("AF6")},
+        ],
+        "stakeholders": [
+            {"label": _plain_val("B36") or "Sales", "value": _plain_val("C36")},
+            {"label": _plain_val("B37") or "PM",    "value": _plain_val("C37")},
+            {"label": _plain_val("B38") or "HW",    "value": _plain_val("C38")},
+            {"label": _plain_val("B41") or "SW",    "value": _plain_val("C41")},
+            {"label": _plain_val("B40") or "MFG",   "value": _plain_val("C40")},
+            {"label": _plain_val("B42") or "E&C",   "value": _plain_val("C42")},
+            {"label": _plain_val("B39") or "BYR",   "value": _plain_val("C39")},
+            {"label": _plain_val("B43") or "A/C",   "value": _plain_val("C43")},
+        ],
+    }
+
+    # extra_sections from config
+    extra_sections_list = []
+    for section in cfg.get("extra_sections", []):
+        section_data = {"title": section.get("title", ""), "rows": []}
+        for row_cfg in section.get("rows", []):
+            row_num     = row_cfg.get("row")
+            value_coord = f"C{row_num}"
+            label_coord = f"B{row_num}"
+            value       = cells.get(value_coord, {}).get("v") if value_coord in cells else None
+            label_excel = cells.get(label_coord, {}).get("v") if label_coord in cells else None
+            row_data = {
+                "label": label_excel or row_cfg.get("label", ""),
+                "value": str(value) if value is not None else "",
+            }
+            if row_cfg.get("format") == "percent" and value is not None:
+                try:
+                    num = float(value)
+                    if 0 <= num <= 1:
+                        row_data["value"] = f"{int(num * 100)}%"
+                except (ValueError, TypeError):
+                    pass
+            if "actual_col" in row_cfg:
+                actual_coord = f"{row_cfg['actual_col']}{row_num}"
+                actual_value = cells.get(actual_coord, {}).get("v") if actual_coord in cells else None
+                row_data["actual"] = str(actual_value) if actual_value is not None else ""
+                if row_cfg.get("format") == "percent" and actual_value is not None:
+                    try:
+                        num = float(actual_value)
+                        if 0 <= num <= 1:
+                            row_data["actual"] = f"{int(num * 100)}%"
+                    except (ValueError, TypeError):
+                        pass
+            section_data["rows"].append(row_data)
+        if section_data["rows"]:
+            extra_sections_list.append(section_data)
+
+    left_panel["extra_sections"] = extra_sections_list
+
+    # ── last_modified ─────────────────────────────────────────
+    last_modified_str = None
+    try:
+        ts = os.path.getmtime(file_path)
+        last_modified_str = datetime.fromtimestamp(ts).strftime("%d %b %Y, %I:%M %p")
+    except Exception:
+        pass
+
+    # ── Assemble result ───────────────────────────────────────
+    result = {
+        "cells":          cells,
+        "col_widths":     col_widths,
+        "row_heights":    row_heights,
+        "max_row":        max_row,
+        "max_col":        max_col,
+        "cols":           cols,
+        "col_groups":     col_groups,
+        "editable_fill":  editable_fill,
+        "project_banner": project_banner,
+        "info_rows":      list(range(1, 6)),
+        "header_rows":    [],
+        "left_panel":     left_panel,
+        "last_modified":  last_modified_str,
+    }
+
+    wb_vals.close()
+    wb_fmt.close()
+
+    _write_sheet_cache(project_id, result, sched_cache)
+    print(f"[SetupCache] Cache written for {project_id}")
+
+    return result
 
 def write_project_setup_data(project_id, form_data, role="pm_head"):
     """Write setup form data to Excel file cells."""
@@ -3270,8 +3750,9 @@ def write_project_setup_data(project_id, form_data, role="pm_head"):
         wb = load_workbook(file_path)
         
         for field, value in form_data.items():
-            if field not in cell_map:
-                continue
+            # Handle scope checkboxes - convert "1" to "YES", empty to "NO"
+            if field in ["scope_hw", "scope_sw", "scope_mfg", "scope_inst", "scope_com"]:
+                value = "YES" if value == "1" else "NO"
             
             mapping = cell_map[field]
             sheet_name = mapping.get("sheet", "PrjSch")
@@ -3291,7 +3772,16 @@ def write_project_setup_data(project_id, form_data, role="pm_head"):
                 except (ValueError, TypeError):
                     cell_value = 0
             elif field_type == "date":
-                cell_value = value
+                if value:
+                    try:
+                        # Parse from form's YYYY-MM-DD
+                        dt = datetime.strptime(value, "%Y-%m-%d")
+                        # Write as datetime object - Excel will format it
+                        cell_value = dt
+                    except:
+                        cell_value = value
+                else:
+                    cell_value = None
             else:
                 cell_value = str(value)
             
@@ -3299,9 +3789,11 @@ def write_project_setup_data(project_id, form_data, role="pm_head"):
         
         wb.save(file_path)
         
+        # Invalidate any stale cache before regenerating
+        _invalidate_sheet_cache(project_id, sched_cache)
+
         # Generate JSON cache
-        from excel_db import get_raw_sheet
-        sheet_data = get_raw_sheet(file_path, sched_cache=sched_cache, role=role)
+        sheet_data = _generate_cache_with_pycel(project_id, file_path, sched_cache, role)
         last_modified = sheet_data.get('last_modified') if sheet_data else None
         
         # After generating JSON cache, update monitor DA column to "CONFIGURED"
