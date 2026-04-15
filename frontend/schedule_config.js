@@ -322,6 +322,7 @@ var SCHEDULE_CONFIGS = {
     // AG–AK are scope flags only meaningful on row 9 header;
     // they are skipped in the task grid view.
     skipCols: ["AG", "AH", "AI", "AJ", "AK"],
+    
 
     // ── Editable columns (task rows only) ────────────────────
     // AC, AD, AE are formula-driven read-only payment columns.
@@ -541,6 +542,39 @@ var SCHEDULE_CONFIGS = {
               ],
           },
       ],
+
+      // ── Scope configuration (PM only) ──────────────────────────
+      // This drives the scope checkboxes in the project header banner.
+      // Only PM department has this section; SW/HW/MFG will not render it.
+      scopeConfig: {
+        enabled: true,  // Set to false to temporarily disable without deleting config
+        
+        // Cells to read for scope flags (from Excel sheet)
+        cells: {
+          hw:   { col: "AG", row: 9 },
+          sw:   { col: "AH", row: 9 },
+          mfg:  { col: "AI", row: 9 },
+          inst: { col: "AJ", row: 9 },
+          com:  { col: "AK", row: 9 },
+        },
+        
+        // Display labels for each checkbox
+        labels: {
+          hw:   "HW",
+          sw:   "SW",
+          mfg:  "MFG",
+          inst: "INST",
+          com:  "COMM",
+        },
+        
+        // Layout: each inner array is a row of checkboxes
+        // Row 1: HW, SW, MFG (3 items)
+        // Row 2: INST, COMM (2 items)
+        displayOrder: [
+          ["hw", "sw", "mfg"],
+          ["inst", "com"],
+        ],
+      },
     },
 
   }, // end PM
