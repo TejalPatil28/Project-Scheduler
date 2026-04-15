@@ -258,6 +258,7 @@ function openSettingsPopover(e) {
   var pop = document.getElementById("user-popover");
   if (pop) pop.classList.toggle("hidden");
 }
+
 function closeSettingsPopover() {
   var pop = document.getElementById("user-popover");
   if (pop) pop.classList.add("hidden");
@@ -1728,7 +1729,39 @@ function renderExcelMirror(container, data) {
   bannerHtml +=         '<div style="display:flex;align-items:center;gap:8px;"><div style="' + bFont + 'font-size:9px;font-weight:700;text-transform:uppercase;color:' + bLabel + ';white-space:nowrap;">SW Efforts</div><div style="' + bFont + 'font-size:13px;font-weight:700;color:' + bValue + ';white-space:nowrap;">' + h(lp_sw_efforts) + '</div></div>';
   bannerHtml +=       '</div>';
    
+// ── Scope Section (config-driven, only renders if scope data exists) ──
+  var scopeData = data.scope;
+  if (scopeData && scopeData.enabled) {
+    var displayOrder = scopeData.displayOrder || [];
+    var labels = scopeData.labels || {};
+    var cellsData = scopeData.cells || {};
     
+    bannerHtml += '<div style="display:flex;flex-direction:column;justify-content:center;padding:0 16px;flex-shrink:0;border-left:1px solid ' + bDivider + ';">';
+    bannerHtml += '<div style="display:flex;flex-direction:column;gap:4px;">';
+    
+    // Render rows based on displayOrder
+    for (var rowIdx = 0; rowIdx < displayOrder.length; rowIdx++) {
+      var rowKeys = displayOrder[rowIdx];
+      bannerHtml += '<div style="display:flex;gap:16px;">';
+      
+      for (var keyIdx = 0; keyIdx < rowKeys.length; keyIdx++) {
+        var key = rowKeys[keyIdx];
+        var cellInfo = cellsData[key] || {};
+        var isChecked = cellInfo.checked || false;
+        var label = labels[key] || key.toUpperCase();
+        
+        bannerHtml += '<div style="display:flex;align-items:center;gap:6px;">';
+        bannerHtml += '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' disabled style="width:14px;height:14px;cursor:default;opacity:0.7;">';
+        bannerHtml += '<span style="' + bFont + 'font-size:11px;font-weight:500;color:' + bLabel + ';">' + h(label) + '</span>';
+        bannerHtml += '</div>';
+      }
+      
+      bannerHtml += '</div>';
+    }
+    
+    bannerHtml += '</div>';
+    bannerHtml += '</div>';
+  }  
 
     // LD Section
   var ldChecked = !!(banner.ld_date_val);  // Check if LD date exists
@@ -1942,6 +1975,68 @@ function renderExcelMirror(container, data) {
         + '</tr>';
     });
     leftPanelHtml += '</tbody></table>';
+
+    // Add Efforts section before Stakeholders
+leftPanelHtml += lpSectionHeader("Efforts (Man-days)");
+
+// Create efforts table
+leftPanelHtml += '<table style="width:100%;border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10px;margin-bottom:12px;">'
+  + '<thead>'
+  + '<tr>'
+  + '<th style="padding:4px 6px;color:' + lpLabel + ';font-weight:700;text-align:left;border-bottom:1px solid ' + lpBorder + ';">Effort</th>'
+  + '<th style="padding:4px 4px;color:' + lpLabel + ';font-weight:700;text-align:center;border-bottom:1px solid ' + lpBorder + ';">Actual</th>'
+  + '<th style="padding:4px 4px;color:' + lpLabel + ';font-weight:700;text-align:center;border-bottom:1px solid ' + lpBorder + ';">Planned</th>'
+  + '</tr>'
+  + '</thead><tbody>';
+
+  // Get values from cells
+  var hwEffortsActual = cells["B17"] ? cells["B17"].v : "—";
+  var hwEffortsPlanned = cells["D17"] ? cells["D17"].v : "—";
+  var stdPanels = cells["D18"] ? cells["D18"].v : "—";
+  var actPanels = cells["D19"] ? cells["D19"].v : "—";
+  var swEffortsActual = cells["B20"] ? cells["B20"].v : "—";
+  var swEffortsPlanned = cells["D20"] ? cells["D20"].v : "—";
+  var mfgEffortsActual = cells["B21"] ? cells["B21"].v : "—";
+  var mfgEffortsPlanned = cells["D21"] ? cells["D21"].v : "—";
+
+  // Helper to format cell value
+  function formatEffortValue(val) {
+    if (val === "—" || val === null || val === undefined || val === "") return "—";
+    return h(String(val));
+  }
+
+  leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
+    + '<td style="padding:4px 6px;color:' + lpLabel + ';font-weight:600;">HW Efforts</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(hwEffortsActual) + '</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(hwEffortsPlanned) + '</td>'
+    + '</tr>';
+
+  leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
+    + '<td style="padding:4px 6px;color:' + lpLabel + ';font-weight:600;">Std Panels</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">—</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(stdPanels) + '</td>'
+    + '</tr>';
+
+  leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
+    + '<td style="padding:4px 6px;color:' + lpLabel + ';font-weight:600;">Act Panels</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">—</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(actPanels) + '</td>'
+    + '</tr>';
+
+  leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
+    + '<td style="padding:4px 6px;color:' + lpLabel + ';font-weight:600;">SW Efforts</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(swEffortsActual) + '</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(swEffortsPlanned) + '</td>'
+    + '</tr>';
+
+  leftPanelHtml += '<tr style="border-bottom:1px solid ' + lpBorder + ';">'
+    + '<td style="padding:4px 6px;color:' + lpLabel + ';font-weight:600;">Mfg Efforts</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(mfgEffortsActual) + '</td>'
+    + '<td style="padding:4px 3px;text-align:center;color:' + lpValue + ';">' + formatEffortValue(mfgEffortsPlanned) + '</td>'
+    + '</tr>';
+
+  leftPanelHtml += '</tbody></table>';
+
     // Stakeholders — hide Sales (idx 0), PM (idx 1), and logged-in user's own row
     var userShort = ((state.user && state.user.short_name) || "").toUpperCase();
     leftPanelHtml += lpSectionHeader("Stakeholders");
@@ -2502,7 +2597,6 @@ async function saveChanges() {
     btn.textContent = "Save Changes";
   }
 }
-
 
 async function refreshFileStatusOnOpen() {
   try {

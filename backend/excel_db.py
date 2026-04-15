@@ -212,6 +212,27 @@ DEPT_CONFIG = {
             "remark": "AF",
             # No help_required for PM
         },
+        "scopeConfig": {
+            "enabled": True,
+            "cells": {
+                "hw":   {"col": "AG", "row": 9},
+                "sw":   {"col": "AH", "row": 9},
+                "mfg":  {"col": "AI", "row": 9},
+                "inst": {"col": "AJ", "row": 9},
+                "com":  {"col": "AK", "row": 9},
+            },
+            "labels": {
+                "hw":   "HW",
+                "sw":   "SW",
+                "mfg":  "MFG",
+                "inst": "INST",
+                "com":  "COMM",
+            },
+            "displayOrder": [
+                ["hw", "sw", "mfg"],
+                ["inst", "com"],
+            ],
+        },
     },
 }
 
@@ -1488,8 +1509,18 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
     date_rows = cfg.get("date_rows", [28, 29, 30, 31, 32, 33])  # default to SW rows
 
     max_row = ws.max_row
+    # Expand max_col if this dept has scope cells beyond the default cap
+    scope_config = cfg.get("scopeConfig")
+    if scope_config and scope_config.get("enabled"):
+        from openpyxl.utils import column_index_from_string
+        for cell_info in scope_config.get("cells", {}).values():
+            col_letter = cell_info.get("col", "")
+            if col_letter:
+                col_idx = column_index_from_string(col_letter)
+                max_col = max(max_col, col_idx)
+
     max_col = min(ws.max_column, max_col)
-    cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]  # hide cols A-D
+    cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A","B","C","D")]
 
     # Initialize PyCel for formula evaluation
     excel_compiler = None
@@ -1979,6 +2010,34 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
     except Exception:
         pass
 
+    # ── Scope configuration (if defined for this department) ────
+    scope_data = None
+    scope_config = cfg.get("scopeConfig")
+    if scope_config and scope_config.get("enabled"):
+        scope_data = {
+            "enabled": True,
+            "cells": {},
+            "labels": scope_config.get("labels", {}),
+            "displayOrder": scope_config.get("displayOrder", []),
+        }
+        for key, cell_info in scope_config.get("cells", {}).items():
+            col = cell_info.get("col")
+            row = cell_info.get("row")
+            if col and row:
+                coord = f"{col}{row}"
+                # Get cell value from cells dict (already processed earlier)
+                cell_val = cells.get(coord, {}).get("v") if coord in cells else None
+                # Check if value is "YES" (case-insensitive)
+                is_checked = False
+                if cell_val is not None:
+                    val_upper = str(cell_val).strip().upper()
+                    is_checked = val_upper in ("YES", "Y", "TRUE", "1")
+                scope_data["cells"][key] = {
+                    "coord": coord,
+                    "value": cell_val,
+                    "checked": is_checked,
+                }
+
     result = {
         "cells":          cells,
         "col_widths":     col_widths,
@@ -1993,6 +2052,7 @@ def get_raw_sheet(filepath, max_col=32, sched_cache=None, role=None):
         "header_rows":    [],
         "left_panel":     left_panel,
         "last_modified":  last_modified_str,
+        "scope":          scope_data,
     }
 
         # Write JSON sidecar cache for fast future loads
@@ -3156,8 +3216,6 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
     from datetime import datetime
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter as gcl
-    from openpyxl.styles.numbers import is_date_format
-    from openpyxl.utils.datetime import from_excel
     
     department = "PM"
     cfg = DEPT_CONFIG[department]
@@ -3181,28 +3239,21 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
     template_path = os.path.join(template_folder, template_files[0])
     shutil.copy2(template_path, file_path)
     
-    # Write to schedule Excel cells
-    wb = load_workbook(file_path)
+    # Load workbook with data_only=False to preserve formulas
+    wb = load_workbook(file_path, data_only=False)
     ws = wb.active
     
-    # ========== FIX DATE CELLS BEFORE SAVING ==========
-    for row in ws.iter_rows():
-        for cell in row:
-            # Check if cell has a value and is an integer/float
-            if cell.value is not None and isinstance(cell.value, (int, float)):
-                # Check if it's a date-formatted cell
-                if cell.number_format and is_date_format(cell.number_format):
-                    # Convert Excel serial to proper datetime
-                    if 1 <= cell.value <= 2958465:
-                        try:
-                            cell.value = from_excel(cell.value)
-                        except Exception:
-                            pass
-    # ==================================================
+    # ========== FIX DATE CELLS BEFORE ANY MODIFICATIONS ==========
+    _safe_fix_schedule_dates(ws)
     
+    # Now write the new values
     ws['D1'] = or_number
     ws['D14'] = section
-    ws['D9'] = float(ov_value)
+    ws['D9'] = float(ov_value) if ov_value else 0
+    
+    # Second pass - fix any dates that might have been affected
+    _safe_fix_schedule_dates(ws)
+    
     wb.save(file_path)
     wb.close()
     
@@ -3227,7 +3278,7 @@ def create_new_project_from_monitor(or_number, section, ov_value, assign_to, use
 
         normalized = or_number + "_" + section
         cells[f"E{new_row}"] = {'v': normalized}
-        cells[f"K{new_row}"] = {'v': float(ov_value)}
+        cells[f"K{new_row}"] = {'v': float(ov_value) if ov_value else 0}
         cells[f"DA{new_row}"] = {'v': 'NEW'}
         
         monitor_data['max_row'] = new_row
@@ -3292,7 +3343,16 @@ def _generate_cache_with_pycel(project_id, file_path, sched_cache=None, role=Non
         excel = None
 
     max_row = ws_vals.max_row
-    max_col = min(ws_vals.max_column, 32)
+    max_col = 32
+    scope_config = cfg.get("scopeConfig")
+    if scope_config and scope_config.get("enabled"):
+        from openpyxl.utils import column_index_from_string
+        for cell_info in scope_config.get("cells", {}).values():
+            col_letter = cell_info.get("col", "")
+            if col_letter:
+                max_col = max(max_col, column_index_from_string(col_letter))
+
+    max_col = min(ws_vals.max_column, max_col)
     cols = [gcl(i) for i in range(1, max_col + 1) if gcl(i) not in ("A", "B", "C", "D")]
 
     # ── Helpers ────────────────────────────────────────────────
@@ -3700,6 +3760,32 @@ def _generate_cache_with_pycel(project_id, file_path, sched_cache=None, role=Non
     except Exception:
         pass
 
+    # ── Scope (same logic as get_raw_sheet) ──────────────────────
+    scope_data = None
+    scope_config = cfg.get("scopeConfig")
+    if scope_config and scope_config.get("enabled"):
+        scope_data = {
+            "enabled": True,
+            "cells": {},
+            "labels": scope_config.get("labels", {}),
+            "displayOrder": scope_config.get("displayOrder", []),
+        }
+        for key, cell_info in scope_config.get("cells", {}).items():
+            col = cell_info.get("col")
+            row = cell_info.get("row")
+            if col and row:
+                coord = f"{col}{row}"
+                cell_val = cells.get(coord, {}).get("v") if coord in cells else None
+                is_checked = False
+                if cell_val is not None:
+                    val_upper = str(cell_val).strip().upper()
+                    is_checked = val_upper in ("YES", "Y", "TRUE", "1")
+                scope_data["cells"][key] = {
+                    "coord": coord,
+                    "value": cell_val,
+                    "checked": is_checked,
+                }
+                
     # ── Assemble result ───────────────────────────────────────
     result = {
         "cells":          cells,
@@ -3715,6 +3801,7 @@ def _generate_cache_with_pycel(project_id, file_path, sched_cache=None, role=Non
         "header_rows":    [],
         "left_panel":     left_panel,
         "last_modified":  last_modified_str,
+        "scope":          scope_data,
     }
 
     wb_vals.close()
