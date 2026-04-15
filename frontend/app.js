@@ -9,47 +9,12 @@ var state = {
   sheetCache: {},  // project_id -> sheet data, client-side cache
 };
 
-// ── Column width configuration (percentage-based, similar to monitor) ──
-var SHEET_COL_WIDTHS = {
-  // Default width for all columns (percentage)
-  _default: "5%",
-  
-  // Specific column overrides
-  "E": "2%",   // Buffer Time
-  "F": "2%",   // PH
-  "G": "2%",   // TFO
-  "H": "2.5%",   // Phase ID
-  "I": "6%",  // Task Description (wider)
-  "J": "5%",   // P1 Start Date
-  "K": "5%",   // P1 End Date
-  "L": "5%",   // P2 Start Date
-  "M": "5%",   // P2 End Date
-  "N": "5%",   // P3 Start Date
-  "O": "5%",   // P3 End Date
-  "P": "4%",   // Org Plan Date
-  "Q": "4%",   // Org End Date
-  "R": "4%",   // Ref. Lead Time
-  "S": "2.5%",   // Lead Time
-  "T": "2%",   // Intlk
-  "U": "2.5%",   // Effort Days
-  "V": "4%",   // Cur. Start Date
-  "W": "4%",   // Cur. End Date
-  "X": "4.5%",   // Act. Start Date
-  "Y": "4.5%",   // Act. End Date
-  "Z": "3%",   // % Complete
-  "AA": "3%",  // Exptd % Completion
-  "AB": "4%",  // Alert Date for 80%
-  "AD": "5%",  // Help Req. from
-  "AF": "7%", // Remark
-};
-
-// ── Column group definitions for project sheet (hardcoded, single group J-R) ──
-var PROJECT_COL_GROUPS = [
-    { key: "planning_dates", label: "Planning Dates", cols: ["J","K","L","M","N","O","P","Q","R"] }
-];
-
+// ── getSheetColumnWidth: reads from active schedule config ────
+// schedule_config.js must be loaded before app.js.
 function getSheetColumnWidth(col) {
-  return SHEET_COL_WIDTHS[col] || SHEET_COL_WIDTHS._default;
+  var cfg = (state && state.user) ? getScheduleConfig(state.user.role) : SCHEDULE_CONFIGS["SW"];
+  var widths = cfg ? cfg.colWidths : {};
+  return widths[col] || widths._default || "5%";
 }
 
 function applyTheme(t) {
@@ -74,8 +39,7 @@ function toast(msg, type) {
 
 // ── Helpers ────────────────────────────────────────────────────
 function roleLabel(role) {
-  var map = {admin:"Admin",head:"Head",pm:"Project Manager",hw_tl:"HW Team Lead",sw_tl:"SW Team Lead",mfg_tl:"MFG Team Lead"};
-  return map[role] || role;
+  return userRoleLabel(role);  // delegated to schedule_config.js ROLE_LABELS
 }
 
 function phaseColor(ph) {
@@ -191,8 +155,7 @@ function buildPopoverHTML() {
   if (u.role === "admin") {
     adminItems = [
       '<div class="popover-sep"></div>',
-      '<button class="popover-item" onclick="showUserModal(); closeSettingsPopover();">\u2795 Add User</button>',
-      '<button class="popover-item" onclick="renderUsers(); closeSettingsPopover();">\u{1F465} Manage Users</button>',
+      '<button class="popover-item" onclick="switchToUsers(); closeSettingsPopover();">\u{1F465} Manage Users</button>',
       '<button class="popover-item" onclick="doRebuildIndex(); closeSettingsPopover();">\u{1F504} Rebuild Index</button>',
       '<button class="popover-item" onclick="refreshMasterList(); closeSettingsPopover();">\u{1F504} Refresh Projects</button>',
     ].join("");
@@ -203,7 +166,7 @@ function buildPopoverHTML() {
         '<div class="avatar avatar-md">' + h(u.name[0].toUpperCase()) + '</div>',
         '<div>',
           '<div class="popover-name">' + h(u.name) + '</div>',
-          '<div class="popover-role">' + roleLabel(u.role) + '</div>',
+          '<div class="popover-role">' + userRoleLabel(u.role) + '</div>',
         '</div>',
       '</div>',
       '<div class="popover-section">',
@@ -249,7 +212,7 @@ function renderShell() {
             '<div class="avatar avatar-sm">' + h(u.name[0].toUpperCase()) + '</div>',
             '<div style="line-height:1.2">',
               '<div style="font-size:12px;font-weight:600;color:var(--text1)">' + h(u.name) + '</div>',
-              '<div style="font-size:10px;color:var(--text2)">' + roleLabel(u.role) + '</div>',
+              '<div style="font-size:10px;color:var(--text2)">' + userRoleLabel(u.role) + '</div>',
             '</div>',
           '</div>',
           '<div class="popover-wrap" id="user-popover-wrap" style="position:relative">',
@@ -414,11 +377,20 @@ async function refreshMonitorData() {
         var result = await API.req("GET", "/monitor/sheet?t=" + Date.now());
         if (result && !result.error) {
             monitorGrid.innerHTML = "";
-            renderMonitor(monitorGrid, result.sheet, state.user, result.overdue || {});
+            var monitorCfg = getMonitorConfig(state.user.role);
+            renderMonitor(monitorGrid, result.sheet, state.user, result.overdue || {}, monitorCfg);
         }
     } catch(err) {
         console.error("Failed to refresh monitor:", err);
     }
+}
+
+// Utility functions to switch to another screen
+
+function switchToUsers() {
+  setNavBtn("users");
+  closeSettingsPopover();
+  renderUsers();
 }
 
 async function switchToMonitor() {
@@ -444,7 +416,8 @@ async function switchToMonitor() {
         page.innerHTML = "";
         page.appendChild(wrap);
         // Pass sheet data and overdue data separately
-        renderMonitor(wrap, result.sheet, state.user, result.overdue || {});
+        var monitorCfg = getMonitorConfig(state.user.role);
+        renderMonitor(wrap, result.sheet, state.user, result.overdue || {}, monitorCfg);
     } catch(err) {
         page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>';
     }
@@ -521,20 +494,41 @@ function renderMasterList(masterList, projects) {
   var el = document.getElementById("master-list");
   if (!el) return;
 
-  if (!masterList.length) {
-    el.innerHTML = '<div class="master-empty">No master file found</div>';
+  // Store master list globally for filtering
+  window._masterListFull = masterList || [];
+  window._projectsFull = projects || [];
+
+
+  // Build search input HTML (NO REFRESH BUTTON HERE - it's already in sidebar header)
+  var searchHtml = [
+    '<div class="master-search-wrap" style="padding: 8px 10px; border-bottom: 1px solid var(--border);">',
+      '<input type="text" id="master-search-input" class="form-input" style="font-size:12px; padding:6px 8px; width: 100%;" placeholder="Search project ID..." autocomplete="off">',
+    '</div>'
+  ].join("");
+
+  // If no projects found
+  if (!masterList || masterList.length === 0) {
+    el.innerHTML = [
+      searchHtml,
+      '<div class="master-empty" style="padding: 20px; text-align: center; color: var(--text3);">No projects found</div>',
+      '<div id="master-list-items" class="master-pane-list"></div>'
+    ].join("");
+    
+    // Bind search input event
+    var searchInput = document.getElementById("master-search-input");
+    if (searchInput) {
+      searchInput.addEventListener("input", function(e) {
+        filterMasterList(e.target.value);
+      });
+    }
+    
+    
     return;
   }
 
-  // Store master list globally for filtering
-  window._masterListFull = masterList;
-  window._projectsFull = projects;
-
-  // Build search input + list container
+  // If projects exist, show full list with button
   var html = [
-    '<div class="master-search-wrap" style="padding: 8px 10px; border-bottom: 1px solid var(--border);">',
-      '<input type="text" id="master-search-input" class="form-input" style="font-size:12px; padding:6px 8px;" placeholder="Search project ID..." autocomplete="off">',
-    '</div>',
+    searchHtml,
     '<div id="master-list-items" class="master-pane-list"></div>'
   ].join("");
 
@@ -547,16 +541,13 @@ function renderMasterList(masterList, projects) {
       filterMasterList(e.target.value);
     });
   }
-  // Bind refresh button event
-  var refreshBtn = document.getElementById("refresh-file-status-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", function() {
-      refreshFileStatusOnOpen();
-    });
-  }
-  // Initial render
+  
+
+  // Render the actual project items
   filterMasterList("");
 }
+
+
 
 async function refreshMasterList() {
     toast("Refreshing project list...");
@@ -591,24 +582,25 @@ function filterMasterList(searchTerm) {
   var container = document.getElementById("master-list-items");
   if (!container) return;
 
-  var user     = state.user || {};
-  var role     = user.role || "";
+  var user = state.user || {};
+  var role = user.role || "";
   var initials = (user.short_name || "").trim().toUpperCase();
-  var isHead   = (role === "head" || role === "admin");
+  var isHead = (role === "head" || role === "admin" || (role && role.endsWith("_head")));
 
-  // Apply role filtering (same logic as monitor screen)
+  // Apply role filtering — column keys from schedule config
+  var schedCfg  = getScheduleConfig(role);
+  var masterCols = (schedCfg && schedCfg.masterListCols) || { head: "swh_head", tl: "swe_name" };
   var roleFiltered;
   if (isHead) {
     roleFiltered = masterList;
   } else {
-    // Check SWH Head (swh_head) first, fallback to SWE Name (swe_name)
-    var swhRows = masterList.filter(function(m) {
-      return (m.swh_head || "").trim().toUpperCase() === initials;
+    var headRows = masterList.filter(function(m) {
+      return (m[masterCols.head] || "").trim().toUpperCase() === initials;
     });
-    roleFiltered = swhRows.length > 0
-      ? swhRows
+    roleFiltered = headRows.length > 0
+      ? headRows
       : masterList.filter(function(m) {
-          return (m.swe_name || "").trim().toUpperCase() === initials;
+          return (m[masterCols.tl] || "").trim().toUpperCase() === initials;
         });
   }
 
@@ -619,6 +611,11 @@ function filterMasterList(searchTerm) {
     var fileId = m.file_id || "";
     return term === "" || pid.toLowerCase().includes(term) || fileId.toLowerCase().includes(term);
   });
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="master-empty" style="padding: 20px; text-align: center; color: var(--text3);">No matching projects</div>';
+    return;
+  }
 
   renderMasterItems(filtered, projects, container);
 }
@@ -648,12 +645,20 @@ function renderMasterItems(masterList, projects, container) {
       ? '<div class="master-prog-bar"><div class="master-prog-fill" style="width:' + pct + '%;background:' + (pct >= 80 ? "var(--green)" : pct >= 40 ? "var(--amber)" : "var(--accent)") + '"></div></div>'
       : "";
 
+    // Determine if this is a new project (needs setup)
+    var isNewProject = (m.da_status === "NEW");
+
     var classes = "master-item"
       + (isActive ? " active" : "")
       + (stale    ? " stale"  : "")
-      + (exists   ? ""        : " no-file");
+      + (exists   ? ""        : " no-file")
+      + (isNewProject ? " new-project" : "");
 
-    var itemBg = !exists ? "background:rgba(244,63,94,0.28);border-color:rgba(244,63,94,0.5);" : "";
+    var itemBg = isNewProject
+      ? "background:rgba(59,130,246,0.18);border-color:rgba(59,130,246,0.5);"
+      : !exists
+        ? "background:rgba(244,63,94,0.28);border-color:rgba(244,63,94,0.5);"
+        : "";
 
     var safeId   = h(pid);
     var safeFile = h(m.file_id || "");
@@ -695,7 +700,16 @@ function onMasterItemClick(pid, exists, fileId) {
       + '</div>';
     return;
   }
-  openProject(fileId || pid);
+  
+  // Find the project in masterList to check da_status
+  var masterProject = window._masterListFull.find(function(m) { return m.file_id === fileId || m.project_id === pid; });
+  
+  // If it's a NEW project (da_status === "NEW"), show setup form
+  if (masterProject && masterProject.da_status === "NEW") {
+    renderSetupForm(fileId || pid);
+  } else {
+    openProject(fileId || pid);
+  }
 }
 
 function setDashTab(tab) {
@@ -1027,7 +1041,7 @@ function renderProjectPage() {
         '</div>',
       '</div>',
     '</div>',
-    '<div class="save-bar" id="save-bar"' + (state.user && (state.user.role === "admin" || state.user.role === "head") ? ' style="display:none"' : '') + '>',
+    '<div class="save-bar" id="save-bar"' + (state.user && (state.user.role === "admin" || state.user.role === "head" || (state.user.role && state.user.role.endsWith("_head"))) ? ' style="display:none"' : '') + '>',
       '<div class="save-bar-left">',
         '<div class="save-count" id="change-count">0</div>',
         '<div class="save-msg">unsaved changes</div>',
@@ -1040,6 +1054,365 @@ function renderProjectPage() {
   ].join("");
 
   renderXLGrid();
+}
+
+// ── SETUP FORM RENDERER v2 (for NEW projects) ─────────────────
+// Clean modern form — layout inspired by Excel PrjSch left panel
+// but rendered as a polished UI (not a raw spreadsheet clone).
+// No non-editable display fields. No huge section tag columns.
+// ──────────────────────────────────────────────────────────────
+async function renderSetupForm(projectId) {
+  var page = document.getElementById("page-content");
+  page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading setup form...</div>';
+  setTopbar("Project Setup", true, function () { switchToProjects(); });
+
+  try {
+    var result = await API.req("GET", "/projects/" + projectId + "/setup");
+
+    if (result.already_setup) {
+      openProject(projectId);
+      return;
+    }
+
+    var fields    = result.fields    || {};
+    var taskNames = result.task_names || {};
+    var isDark = document.documentElement.getAttribute("data-theme") !== "light";
+
+    function has(f) { return !!fields[f]; }
+
+    function inp(name, opts) {
+      opts = opts || {};
+      var cfg  = fields[name];
+      if (!cfg) return "";
+      var type = opts.type || cfg.type || "text";
+      var req  = opts.req  ? ' required' : '';
+      var cls  = "sf2-input";
+
+      if (type === "dropdown") {
+        var os = (cfg.options || []).map(function(o) {
+          return '<option value="' + o + '">' + o + '</option>';
+        }).join("");
+        return '<select name="' + name + '" class="' + cls + '"' + req + '>'
+          + '<option value="">Select…</option>' + os + '</select>';
+      }
+      if (type === "date") {
+        return '<input type="date" name="' + name + '" class="' + cls + '"' + req + '>';
+      }
+      if (type === "number") {
+        return '<input type="number" step="any" name="' + name + '" class="' + cls + '" placeholder="0"' + req + '>';
+      }
+      return '<input type="text" name="' + name + '" class="' + cls + '"' + req + '>';
+    }
+
+    function field(label, name, opts) {
+      if (!has(name)) return "";
+      opts = opts || {};
+      var reqMark = opts.req ? '<span class="sf2-req-dot"></span>' : '';
+      return '<div class="sf2-field' + (opts.cls ? ' ' + opts.cls : '') + '">'
+        + '<label class="sf2-label">' + reqMark + label + '</label>'
+        + inp(name, opts)
+        + '</div>';
+    }
+
+    function card(icon, title, content, fullWidth) {
+      var cardClass = fullWidth ? 'sf2-card sf2-card-full' : 'sf2-card';
+      return '<div class="' + cardClass + '">'
+        + '<div class="sf2-card-header">'
+        + '<span class="sf2-card-icon">' + icon + '</span>'
+        + '<span class="sf2-card-title">' + title + '</span>'
+        + '</div>'
+        + '<div class="sf2-card-body">' + content + '</div>'
+        + '</div>';
+    }
+
+    function row1(a)          { return '<div class="sf2-row1">'   + a                 + '</div>'; }
+    function row2(a, b)       { return '<div class="sf2-row2">'   + a + b             + '</div>'; }
+    function row3(a, b, c)    { return '<div class="sf2-row3">'   + a + b + c         + '</div>'; }
+    function row4(a, b, c, d) { return '<div class="sf2-row4">'   + a + b + c + d     + '</div>'; }
+
+    // ── Build all sections ─────────────────────────────────────
+
+    // Header Information Card
+    var headerContent = row3(
+      field("Master OR",      "master_or",      { req: true }),
+      field("Quote Number",   "quote_number",   { req: true }),
+      field("Client PO#",     "client_po")
+    ) + row2(
+      field("Sales Engineer", "sales_engineer", { req: true }),
+      field("Sales Manager",  "sales_manager",  { req: true })
+    );
+    var headerCard = card("📋", "Header Information", headerContent);
+
+    // Dates Card
+    var datesContent = '<div class="sf2-dates-grid">';
+    datesContent += '<div class="sf2-dg-head">Milestone</div>';
+    datesContent += '<div class="sf2-dg-head center accent-col">Customer</div>';
+    datesContent += '<div class="sf2-dg-head center">PM</div>';
+    var dateList = [
+      ["PO Date",   "po_date",   true],
+      ["OPF Recpt", "opf_recpt", false],
+      ["HW Input",  "hw_input",  false],
+      ["Dwg. Sub.", "dwg_sub",   false],
+      ["Dwg Appr",  "dwg_appr",  false],
+      ["HW FAT",    "hw_fat",    false],
+      ["Dispatch",  "dispatch",  false],
+      ["SW Input",  "sw_input",  false],
+      ["SW FAT",    "sw_fat",    false],
+      ["Install",   "install",   false],
+      ["PreComm.",  "precomm",   false],
+      ["Comm.",     "comm",      false],
+    ];
+    dateList.forEach(function(dr) {
+      if (!has(dr[1]) && !dr[2]) return;
+      datesContent += '<div class="sf2-dg-lbl' + (dr[2] ? ' req' : '') + '">' + dr[0] + '</div>';
+      datesContent += '<div class="sf2-dg-cell"><input type="date" name="' + dr[1] + '"></div>';
+      datesContent += '<div class="sf2-dg-cell auto-cell">auto</div>';
+    });
+    datesContent += '</div>';
+    var datesCard = card("📅", "Dates", datesContent);
+
+    // Project Details Card
+    var detailsContent = row3(
+      field("PO Value (lacs)",      "po_value",      { req: true, type: "number" }),
+      field("Section",               "section",        { req: true, type: "dropdown" }),
+      field("Mfg. Location",         "mfg_loc",        { type: "dropdown" })
+    ) + row3(
+      field("Customer Name",         "customer_name",  { req: true }),
+      field("End Customer",          "end_customer"),
+      field("Consultant",            "consultant")
+    ) + row1(
+      field("Project Description",   "project_desc",   { req: true })
+    );
+    var detailsCard = card("🏗", "Project Details", detailsContent);
+
+    // Stakeholders Card
+    var shContent = '<div class="sf2-sh-grid">';
+    var shList = [
+      ["Sales", "sh_sales"], ["MFG", "sh_mfg"],
+      ["HW",    "sh_hw"],    ["E&C", "sh_ec"],
+      ["SW",    "sh_sw"],    ["A/C", "sh_ac"],
+      ["BYR",   "sh_byr"],
+    ];
+    shList.forEach(function(sh) { shContent += field(sh[0], sh[1]); });
+    shContent += '</div>';
+    // Add Scope checkboxes below stakeholders
+    var scopeList = ["scope_hw", "scope_sw", "scope_mfg", "scope_inst", "scope_com"];
+    var scopeLabels = { scope_hw: "HW", scope_sw: "SW", scope_mfg: "MFG", scope_inst: "Inst", scope_com: "Com" };
+    var hasScope = scopeList.some(function(f) { return has(f); });
+
+    if (hasScope) {
+      shContent += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
+      shContent += '<div class="sf2-label" style="margin-bottom:8px;">Scope</div>';
+      shContent += '<div class="sf2-scope-row">';
+      scopeList.forEach(function(f) {
+        if (!has(f)) return;
+        shContent += '<label class="sf2-scope-item">'
+          + '<input type="checkbox" name="' + f + '" value="1"> ' + scopeLabels[f] + '</label>';
+      });
+      shContent += '</div></div>';
+    }
+    var stakeholdersCard = card("👥", "Stakeholders & Scope", shContent);
+
+    // Efforts Card
+    var effortsContent = row3(
+      field("HW Efforts",       "hw_efforts",  { req: true, type: "number" }),
+      field("SW Efforts",       "sw_efforts",  { req: true, type: "number" }),
+      field("Mfg Efforts",      "mfg_efforts", { req: true, type: "number" })
+    ) + row2(
+      field("No. of Std Panels", "std_panels", { req: true, type: "number" }),
+      field("No. of Act Panels", "act_panels", { req: true, type: "number" })
+    );
+
+    // Add Critical Lead Time, Normal Lead Time, and Warranty below
+    var extraEffortsContent = '';
+
+    if (has("critical_lead_time") || has("normal_lead_time")) {
+      extraEffortsContent += row2(
+        field("Critical Lead Time", "critical_lead_time", { type: "number" }),
+        field("Normal Lead Time",   "normal_lead_time",   { type: "number" })
+      );
+    }
+
+    if (has("warranty")) {
+      extraEffortsContent += row1(field("Warranty Terms", "warranty"));
+    }
+
+    if (extraEffortsContent) {
+      effortsContent += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' 
+        + extraEffortsContent + '</div>';
+    }
+
+    var effortsCard = card("⚙", "Efforts", effortsContent);
+    var effortsCard = card("⚙", "Efforts", effortsContent);
+
+    // Actuals Card (Full Width)
+    var actualsContent = '';
+    var hasActuals = has("est_va_pct") || has("est_va") || has("est_sm_pct") || has("est_sm")
+                  || has("act_va_pct") || has("act_va") || has("act_sm_pct") || has("act_sm");
+    if (hasActuals) {
+      actualsContent += '<table class="sf2-actuals-table">';
+      actualsContent += '<thead><tr><th></th><th>VA %</th><th>VA</th><th>SM %</th><th>SM</th></tr></thead><tbody>';
+      
+      function actualsCell(name) {
+        if (!has(name)) return '<td></td>';
+        return '<td><input type="number" step="any" name="' + name + '" placeholder="0"></td>';
+      }
+      
+      actualsContent += '<tr><td>Estimated</td>' + actualsCell("est_va_pct") + actualsCell("est_va") + actualsCell("est_sm_pct") + actualsCell("est_sm") + '</tr>';
+      actualsContent += '<tr><td>Actual</td>' + actualsCell("act_va_pct") + actualsCell("act_va") + actualsCell("act_sm_pct") + actualsCell("act_sm") + '</tr>';
+      actualsContent += '</tbody></table>';
+      
+      actualsContent += row2(
+        field("Balance Panels",  "balance_panels", { type: "number" }),
+        field("Panel Disp Act",  "panel_disp_act", { type: "number" })
+      );
+      actualsContent += row1(field("Reason / Remark", "reason_remark"));
+    }
+    var actualsCard = hasActuals ? card("📊", "Actuals", actualsContent, true) : '';
+
+    // LD Details Card (Full Width)
+    var ldContent = '';
+    var hasLD = has("ld_date") || has("ld_maxwk") || has("ld_maxov") || has("ld_remarks");
+    if (hasLD) {
+      ldContent = row4(
+        field("LD Date",     "ld_date",    { type: "date" }),
+        field("LD Max/Wk %", "ld_maxwk",  { type: "number" }),
+        field("LD Max/OV %", "ld_maxov",  { type: "number" }),
+        field("LD Remarks",  "ld_remarks")
+      );
+    }
+    var ldCard = hasLD ? card("⚠", "LD Details", ldContent, true) : '';
+
+    // Task-Specific Fields Card (Full Width)
+    var taskContent = '';
+    var taskRows = {};
+    Object.keys(fields).forEach(function(key) {
+      var cfg = fields[key];
+      if (!cfg || !cfg.task_row) return;
+      var r = cfg.task_row;
+      if (!taskRows[r]) taskRows[r] = { s: null, u: null, ad: null, name: taskNames[r] || ("Task " + r) };
+      if (key.match(/^s\d/) || key === "s")  taskRows[r].s  = key;
+      if (key.match(/^u\d/) || key === "u")  taskRows[r].u  = key;
+      if (key.match(/^ad/))                  taskRows[r].ad = key;
+    });
+    var sortedTaskRows = Object.keys(taskRows).sort(function(a, b) { return parseInt(a) - parseInt(b); });
+
+    if (sortedTaskRows.length > 0) {
+      taskContent += '<table class="sf2-task-table">';
+      taskContent += '<thead><tr>'
+        + '<th style="width:44%">Task</th>'
+        + '<th style="width:18%">Lead Time (S)</th>'
+        + '<th style="width:18%">Effort Days (U)</th>'
+        + '<th style="width:20%">Payment % (AD)</th>'
+        + '</tr></thead><tbody>';
+      
+      sortedTaskRows.forEach(function(rn) {
+        var tk = taskRows[rn];
+        
+        function taskCell(fieldKey) {
+          if (!fieldKey) {
+            return '<td class="task-cell-disabled"></td>';
+          } else {
+            return '<td><input type="number" step="any" name="' + fieldKey + '" placeholder="" style="text-align:center;"></td>';
+          }
+        }
+        
+        taskContent += '<tr>'
+          + '<td>' + h(tk.name) + '</td>'
+          + taskCell(tk.s)
+          + taskCell(tk.u)
+          + taskCell(tk.ad)
+          + '</tr>';
+      });
+      taskContent += '</tbody></table>';
+    }
+    var tasksCard = sortedTaskRows.length > 0 ? card("📝", "Task-Specific Fields", taskContent, true) : '';
+
+    // ── Assemble the layout ────────────────────────────────────
+    var html = [
+      '<div class="sf2-wrap">',
+        '<div class="sf2-topbar">',
+          '<div class="sf2-topbar-left">',
+            '<div class="sf2-topbar-name">Project Setup</div>',
+            '<div class="sf2-topbar-id">' + h(projectId) + '</div>',
+          '</div>',
+          '<div class="sf2-topbar-actions">',
+            '<button type="button" class="btn btn-secondary btn-sm" onclick="switchToProjects()">Cancel</button>',
+            '<button type="button" class="btn btn-primary btn-sm" id="sf2-save-btn" onclick="doSetupSave(\'' + h(projectId) + '\')">Save &amp; Continue →</button>',
+          '</div>',
+        '</div>',
+        '<div class="sf2-body">',
+          '<form id="project-setup-form">',
+            '<div class="sf2-layout-columns">',
+              '<div class="sf2-col-left">',
+                headerCard,
+                detailsCard,
+                effortsCard,
+              '</div>',
+              '<div class="sf2-col-right">',
+                datesCard,
+                stakeholdersCard,
+              '</div>',
+            '</div>',
+            actualsCard,
+            ldCard,
+            tasksCard,
+          '</form>',
+        '</div>',
+      '</div>',
+    ].join("");
+
+    page.innerHTML = html;
+
+    // ── Save handler ──────────────────────────────────────────
+    window.doSetupSave = async function(pid) {
+      var btn = document.getElementById("sf2-save-btn");
+      var formData = {};
+      var els = document.getElementById("project-setup-form").elements;
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!el.name || el.disabled) continue;
+        if (el.type === "checkbox") {
+          formData[el.name] = el.checked ? "1" : "";
+        } else {
+          formData[el.name] = el.value;
+        }
+      }
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px"></span>';
+      try {
+        var res = await API.req("POST", "/projects/" + pid + "/setup", formData);
+        if (res.success) {
+          toast("Project setup completed!");
+          if (window._masterListFull) {
+            window._masterListFull.forEach(function(m) {
+              if (m.file_id === pid || m.project_id === pid) m.da_status = "CONFIGURED";
+            });
+          }
+          if (window._masterList) {
+            window._masterList.forEach(function(m) {
+              if (m.file_id === pid || m.project_id === pid) m.da_status = "CONFIGURED";
+            });
+          }
+          var searchTerm = document.getElementById("master-search-input")?.value || "";
+          filterMasterList(searchTerm);
+          openProject(pid);
+        } else {
+          toast(res.message || "Save failed", "error");
+          btn.disabled = false;
+          btn.innerHTML = "Save &amp; Continue →";
+        }
+      } catch(err) {
+        toast(err.message || "Save failed", "error");
+        btn.disabled = false;
+        btn.innerHTML = "Save &amp; Continue →";
+      }
+    };
+
+  } catch(err) {
+    console.error("Setup form error:", err);
+    page.innerHTML = '<div class="alert alert-error">Failed to load setup form: ' + h(err.message) + '</div>';
+  }
 }
 
 function updateProjectHeaderTimestamp(timestamp) {
@@ -1091,7 +1464,7 @@ async function loadSheetView() {
 
       return;
     }
-    var data = await API.req("GET", "/projects/" + pid + "/sheet");
+    var data = await API.req("GET", "/projects/" + pid + "/sheet" );
     state.sheetCache[pid] = data;  // cache in browser
     // Update timestamp
     if (data.last_modified) {
@@ -1113,10 +1486,8 @@ function renderExcelMirror(container, data) {
   var rowHeights   = data.row_heights;
   var maxRow       = data.max_row;
   var cols         = data.cols;
-  console.log("All columns in grid:", cols);
-  console.log("Does column R exist in cols?", cols.indexOf("R") !== -1);
-  console.log("Index of R:", cols.indexOf("R"));
-  var colGroups    = PROJECT_COL_GROUPS;
+  var schedCfg  = getScheduleConfig((state.user && state.user.role) || "sw_tl");
+  var colGroups = schedCfg ? schedCfg.colGroups : [];
   var editableFill = data.editable_fill || null;
   var infoRows     = data.info_rows    || [];
   var headerRows   = data.header_rows  || [];
@@ -1127,96 +1498,83 @@ function renderExcelMirror(container, data) {
   var headerRowSet = {};
   headerRows.forEach(function(r) { headerRowSet[r] = true; });
 
-  // Add these constants
-  var TASK_START_ROW = 9;
-  var TASK_END_ROW = 55;
+  // ── Pull all rendering config from schedule_config.js ───────
+  var TASK_START_ROW = schedCfg ? schedCfg.taskStartRow : 9;
+  var TASK_END_ROW   = schedCfg ? schedCfg.taskEndRow   : 55;
+  var skipColsSet    = {};
+  ((schedCfg && schedCfg.skipCols) || ["AC","AE"]).forEach(function(c){ skipColsSet[c] = true; });
 
-  var AD_OPTIONS = ["Engineering","Purchase","Software","Project Management","Manufacturing","Sales","Client"];
+  // Help dropdown — may be null for depts that have no color-coded help column (e.g. PM)
+  var helpDropdown  = (schedCfg && schedCfg.helpDropdown) || null;
+  var AD_COL        = helpDropdown ? (helpDropdown.col || "AD") : null;
+  var AD_OPTIONS    = helpDropdown ? (helpDropdown.options    || []) : [];
+  var AD_COLORS     = helpDropdown ? (isDark ? (helpDropdown.colorsDark  || {}) : (helpDropdown.colorsLight || {})) : {};
+  var AD_FG_DARK    = helpDropdown ? (helpDropdown.fgDark     || {}) : {};
 
-    // ── COLOR CONFIGURATION ─────────────────────────────────
-  // Define all custom background colors for columns/ranges
-  // Add new rules here as needed
-    var colorRules = isDark ? [
-      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#2a2a2a" },
-      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#152030" },
-    ] : [
-      { name: "task columns E-W", columns: ["E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","AA","AB"], rows: "9+", color: "#d9d9d9" },
-      { name: "actual dates X,Y,Z", columns: ["X","Y","Z"], rows: "9+", color: "#90b4df" },
-    ];
-    // AD Column color mapping based on dropdown value
-    var AD_COLORS = isDark ? {
-        "engineering":        "#3d1a1a",
-        "purchase":           "#1a2e14",
-        "software":           "#0e2233",
-        "project management": "#0a1a30",
-        "manufacturing":      "#1a2a14",
-        "sales":              "#003333",
-        "client":             "#2a0a2a"
-    } : {
-        "engineering":        "#ffb3b3",
-        "purchase":           "#5f933c",
-        "software":           "#0096cc",
-        "project management": "#005fa3",
-        "manufacturing":      "#2f491e",
-        "sales":              "#00d9d9",
-        "client":             "#6d006d"
-    };
+  // Color rules — map from config format to existing internal format
+  var _cfgColorRules = (schedCfg && schedCfg.colorRules)
+    ? (isDark ? schedCfg.colorRules.dark : schedCfg.colorRules.light)
+    : [];
+  var colorRules = _cfgColorRules.map(function(r) {
+    return { columns: r.cols, rows: r.rows, color: r.color };
+  });
+
+  // Text rules
+  var _cfgTextRules = (schedCfg && schedCfg.textRules) || [];
   
-        // ── TEXT RULES CONFIGURATION ─────────────────────────────────
-    // Define text color rules based on cell comparisons
-    var textRules = [
-        { 
-            name: "Lead Time mismatch", 
-            column: "S",           // Column to apply text color to
-            condition: "not_equal", 
-            compare_with: "R",     // Compare with this column
-            rows: "9+",            // Apply to rows 9 and above
-            color: "var(--red)"    // Text color when condition is true
-        },
-        {
-            name: "Progress behind plan",
-            column: "Z",
-            condition: "less_than",
-            compare_with: "AA",
-            rows: "9+",
-            color: "var(--red)"
-        },
-    ];
-    
-    // Function to check if a text rule applies to a cell
+  // ── Text rule evaluator (config-driven) ──────────────────────
+  // Supported conditions: not_equal | less_than | value_zero | value_equals | value_less_than
   function getTextRuleColor(col, row, cells) {
-        for (var i = 0; i < textRules.length; i++) {
-            var rule = textRules[i];
-            if (rule.column !== col) continue;
-            if (rule.rows === "9+" && row < 9) continue;
-            if (rule.rows === "all" || rule.rows === "9+") {
+    for (var i = 0; i < _cfgTextRules.length; i++) {
+      var rule = _cfgTextRules[i];
+      if (rule.col !== col) continue;
+      if (rule.rows === "9+" && row < 9) continue;
 
-                if (rule.condition === "not_equal" && rule.compare_with) {
-                    var currentVal = cells[rule.column + row] ? String(cells[rule.column + row].v || "") : "";
-                    var compareVal = cells[rule.compare_with + row] ? String(cells[rule.compare_with + row].v || "") : "";
-                    var normCurrent = normalizeValue(currentVal);
-                    var normCompare = normalizeValue(compareVal);
-                    if (normCurrent === "" && typeof normCompare === "number") normCurrent = 0;
-                    if (normCompare === "" && typeof normCurrent === "number") normCompare = 0;
-                    if (normCurrent !== normCompare) {
-                        return rule.color;
-                    }
-                }
+      // Cross-column comparison: cell ≠ compareWith col
+      if (rule.condition === "not_equal" && rule.compareWith) {
+        var curVal  = cells[rule.col         + row] ? String(cells[rule.col         + row].v || "") : "";
+        var cmpVal  = cells[rule.compareWith + row] ? String(cells[rule.compareWith + row].v || "") : "";
+        var nCur = normalizeValue(curVal);
+        var nCmp = normalizeValue(cmpVal);
+        if (nCur === "" && typeof nCmp === "number") nCur = 0;
+        if (nCmp === "" && typeof nCur === "number") nCmp = 0;
+        if (nCur !== nCmp) return rule.color;
+      }
 
-                if (rule.condition === "less_than" && rule.compare_with) {
-                    var currentVal = cells[rule.column + row] ? String(cells[rule.column + row].v || "") : "";
-                    var compareVal = cells[rule.compare_with + row] ? String(cells[rule.compare_with + row].v || "") : "";
-                    var numCurrent = parseFloat(currentVal.replace("%", "").trim());
-                    var numCompare = parseFloat(compareVal.replace("%", "").trim());
-                    if (!isNaN(numCurrent) && !isNaN(numCompare) && numCurrent < numCompare) {
-                        return rule.color;
-                    }
-                }
+      // Cross-column comparison: cell < compareWith col
+      if (rule.condition === "less_than" && rule.compareWith) {
+        var curVal  = cells[rule.col         + row] ? String(cells[rule.col         + row].v || "") : "";
+        var cmpVal  = cells[rule.compareWith + row] ? String(cells[rule.compareWith + row].v || "") : "";
+        var numCur  = parseFloat(curVal.replace("%", "").trim());
+        var numCmp  = parseFloat(cmpVal.replace("%", "").trim());
+        if (!isNaN(numCur) && !isNaN(numCmp) && numCur < numCmp) return rule.color;
+      }
 
-            }
-        }
-        return null;
+      // Self-value: cell is 0, "0", null, or empty
+      if (rule.condition === "value_zero") {
+        var cellInfo = cells[rule.col + row];
+        var rawVal   = cellInfo ? String(cellInfo.v !== null && cellInfo.v !== undefined ? cellInfo.v : "") : "";
+        var num      = parseFloat(rawVal.trim());
+        if (rawVal.trim() === "" || rawVal.trim() === "0" || (!isNaN(num) && num === 0)) return rule.color;
+      }
+
+      // Self-value: cell === rule.value (string match after trim)
+      if (rule.condition === "value_equals" && rule.value !== undefined) {
+        var cellInfo = cells[rule.col + row];
+        var rawVal   = cellInfo ? String(cellInfo.v !== null && cellInfo.v !== undefined ? cellInfo.v : "") : "";
+        if (rawVal.trim() === String(rule.value).trim()) return rule.color;
+      }
+
+      // Self-value: parseFloat(cell) < rule.value
+      if (rule.condition === "value_less_than" && rule.value !== undefined) {
+        var cellInfo = cells[rule.col + row];
+        var rawVal   = cellInfo ? String(cellInfo.v !== null && cellInfo.v !== undefined ? cellInfo.v : "") : "";
+        var num      = parseFloat(rawVal.replace("%", "").trim());
+        if (!isNaN(num) && num < rule.value) return rule.color;
+      }
     }
+    return null;
+  }
 
     // Helper function to normalize values for comparison
     function normalizeValue(val) {
@@ -1260,14 +1618,20 @@ function renderExcelMirror(container, data) {
 
   function renderInputCell(info, coord, col, tdStyle, overrideColor) {
     var curVal = _editPending[coord] !== undefined ? _editPending[coord] : (info.v || "");
-    var inputTextColor = overrideColor || (isDark ? "#d8d8d8" : "#000000");  // contrast-aware
+    var inputTextColor = overrideColor || (isDark ? "#d8d8d8" : "#000000");
     var inputStyle = "width:100%;height:100%;border:none;outline:none;background:transparent;font-family:Calibri,Arial,sans-serif;font-size:11px;padding:0 2px;box-sizing:border-box;color:" + inputTextColor + ";";
     var input = "";
 
-    if (col === "X" || col === "Y") {
-      // Date picker
+    var _editColCfg = schedCfg && schedCfg.editableCols ? schedCfg.editableCols[col] : null;
+    var _colType    = _editColCfg ? _editColCfg.type : null;
+
+    // "readonly" type — show value as plain text, no input widget
+    if (_colType === "readonly") {
+      return h(String(curVal !== null && curVal !== undefined ? curVal : ""));
+    }
+
+    if (_colType === "date") {
       var dateVal = curVal ? curVal : "";
-      // Convert dd-Mon-yy to yyyy-mm-dd for input[type=date]
       if (dateVal) {
         try {
           var d = new Date(dateVal);
@@ -1275,18 +1639,18 @@ function renderExcelMirror(container, data) {
         } catch(e) {}
       }
       input = "<input type=\"date\" style=\"" + inputStyle + "\" value=\"" + dateVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
-    } else if (col === "Z") {
-      // Number 0-100 — value from Excel is e.g. "100%" so strip the %
+    } else if (_colType === "number") {
+      var _min = (_editColCfg && _editColCfg.min !== undefined) ? _editColCfg.min : 0;
+      var _max = (_editColCfg && _editColCfg.max !== undefined) ? _editColCfg.max : 100;
       var numVal = String(curVal || "0").replace("%", "").trim();
-      input = "<input type=\"number\" min=\"0\" max=\"100\" style=\"" + inputStyle + "\" value=\"" + numVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
-    } else if (col === "AD") {
-      // Dropdown
+      input = "<input type=\"number\" min=\"" + _min + "\" max=\"" + _max + "\" style=\"" + inputStyle + "\" value=\"" + numVal + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
+    } else if (_colType === "dropdown") {
+      // dropdown options come from helpDropdown (only valid when helpDropdown is non-null)
       var opts = AD_OPTIONS.map(function(o) {
         return "<option value=\"" + o + "\"" + (o === curVal ? " selected" : "") + ">" + o + "</option>";
       }).join("");
       input = "<select style=\"" + inputStyle + "cursor:pointer;\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this);__applyAdColor(this)\" ><option value=\"\"></option>" + opts + "</select>";
-    } else if (col === "AF") {
-      // Remarks - free text input
+    } else if (_colType === "text") {
       input = "<input type=\"text\" style=\"" + inputStyle + "\" value=\"" + h(curVal || "") + "\" data-coord=\"" + coord + "\" data-col=\"" + col + "\" onchange=\"__xlEditCell(this)\">";
     }
     return input;
@@ -1301,14 +1665,18 @@ function renderExcelMirror(container, data) {
     g.cols.forEach(function(c) { colToGroup[c] = gi; });
   });
 
-  // Returns true if this col should be hidden (all cols in group hide when collapsed)
+  // Returns true if this col should be hidden due to group collapse
   function isCollapsedCol(col) {
     var gi = colToGroup[col];
     if (gi === undefined || gi < 0) return false;
     if (!collapseState[gi]) return false;
-    // When collapsed, hide all cols EXCEPT the last one (which shows as placeholder)
     var lastCol = colGroups[gi].cols[colGroups[gi].cols.length - 1];
     return col !== lastCol;
+  }
+
+  // Returns true if this col should be skipped entirely (from config.skipCols)
+  function isSkippedCol(col) {
+    return !!skipColsSet[col];
   }
 
   function borderStyle(weight) {
@@ -1476,7 +1844,7 @@ function renderExcelMirror(container, data) {
     var totalWidthPct = 0;
     for (var ci = 0; ci < cols.length; ci++) {
       var colCheck = cols[ci];
-      if (colCheck === "AC" || colCheck === "AE") continue;
+      if (isSkippedCol(colCheck)) continue;
       if (isCollapsedCol(colCheck)) continue;  // ← skip hidden cols
       var w = getSheetColumnWidth(colCheck);
       var pctVal = parseFloat(w);
@@ -1589,6 +1957,23 @@ function renderExcelMirror(container, data) {
         leftPanelHtml += lpRow(item.label, item.value, true);
       });
     }
+    // Extra sections — config-driven (e.g. PM's VA/SM actuals block)
+    // Server sends leftPanel.extra_sections[] matching schedCfg.leftPanel.extraSections
+    var _extraSections = leftPanel.extra_sections || [];
+    _extraSections.forEach(function(section) {
+      if (!section || !section.rows || !section.rows.length) return;
+      var hasAnyValue = section.rows.some(function(row) { return row.value || row.actual; });
+      if (!hasAnyValue) return;
+      leftPanelHtml += lpSectionHeader(section.title || "");
+      section.rows.forEach(function(row) {
+        if (row.actual !== undefined && row.actual !== null && row.actual !== "") {
+          // Two-value row (estimated vs actual) — show as "est → act"
+          leftPanelHtml += lpRow(row.label, (row.value || "—") + " → " + (row.actual || "—"));
+        } else {
+          leftPanelHtml += lpRow(row.label, row.value, row.wrap);
+        }
+      });
+    });
     leftPanelHtml += '</div>'; // end inner
     leftPanelHtml += '</div>'; // end panel
 
@@ -1607,7 +1992,7 @@ function renderExcelMirror(container, data) {
       var ci = 0;
       while (ci < cols.length) {
         var col = cols[ci];
-        if (col === "AC" || col === "AE") { ci++; continue; }
+        if (isSkippedCol(col)) { ci++; continue; }
         var gi  = colToGroup[col];
 
         if (gi !== undefined && gi >= 0 && cols[ci] === colGroups[gi].cols[0]) {
@@ -1650,67 +2035,8 @@ function renderExcelMirror(container, data) {
     // ── TBODY ──
     html += '</thead>';
 
-    // ── CUSTOM HEADER ROW (replaces hidden Excel rows 6-8) ───────
-    // Defines semantic column headers for the task grid
-    var customHeaderDefs = {
-      // col letter -> label, and optional bg/text overrides
-      "E":  { label: "Buffer Time",         bg: "#2a2010", fg: "#d4a96a" },
-      "F":  { label: "PH",           bg: "#2a2010", fg: "#d4a96a" },
-      "G":  { label: "TFO",       bg: "#2a2010", fg: "#d4a96a" },
-      "H":  { label: "Phase ID",     bg: "#2a2010", fg: "#d4a96a" },
-      "I":  { label: "Task Description",     bg: "#2a2010", fg: "#d4a96a" },
-      "J":  { label: "P1 Start Date",         bg: "#2a2010", fg: "#d4a96a" },
-      "K":  { label: "P1 End Date",          bg: "#2a2010", fg: "#d4a96a" },
-      "L":  { label: "P2 Start Date",   bg: "#2a2010", fg: "#d4a96a" },
-      "M":  { label: "P2 End Date",           bg: "#2a2010", fg: "#d4a96a" },
-      "N":  { label: "P3 Start Date",     bg: "#2a2010", fg: "#d4a96a" },
-      "O":  { label: "P3 End Date",       bg: "#2a2010", fg: "#d4a96a" },
-      "P":  { label: "Org Plan Date",       bg: "#2a2010", fg: "#d4a96a" },
-      "Q":  { label: "Org End Date",        bg: "#2a2010", fg: "#d4a96a" },
-      "R":  { label: "Ref. Lead Time",       bg: "#2a2010", fg: "#d4a96a" },
-      "S":  { label: "Lead Time",       bg: "#2a2010", fg: "#d4a96a" },
-      "T":  { label: "Intlk",         bg: "#2a2010", fg: "#d4a96a" },
-      "U":  { label: "Effort Days",         bg: "#2a2010", fg: "#d4a96a" },
-      "V":  { label: "Cur. Start Date",        bg: "#2a2010", fg: "#d4a96a" },
-      "W":  { label: "Cur. End Date",     bg: "#2a2010", fg: "#d4a96a" },
-      "X":  { label: "Act. Start Date",    bg: "#2a2010", fg: "#d4a96a" },
-      "Y":  { label: "Act. End Date",      bg: "#2a2010", fg: "#d4a96a" },
-      "Z":  { label: "% Complete",        bg: "#2a2010", fg: "#d4a96a" },
-      "AA": { label: "Exptd % Completion",      bg: "#2a2010", fg: "#d4a96a" },
-      "AB": { label: "Alert Date for 80%",        bg: "#2a2010", fg: "#d4a96a" },
-      "AD": { label: "Help Req. from",     bg: "#2a2010", fg: "#d4a96a" },
-      "AF": { label: "Remark",        bg: "#2a2010", fg: "#d4a96a" },
-    };
-    // Light mode overrides
-    var customHeaderDefsLight = {
-      "E":  { label: "Buffer Time",         bg: "#fcd5b4", fg: "#000000" },
-      "F":  { label: "PH",           bg: "#fcd5b4", fg: "#000000" },
-      "G":  { label: "TFO",       bg: "#fcd5b4", fg: "#000000" },
-      "H":  { label: "Phase ID",     bg: "#fcd5b4", fg: "#000000" },
-      "I":  { label: "Task Description",     bg: "#fcd5b4", fg: "#000000" },
-      "J":  { label: "P1 Start Date",         bg: "#fcd5b4", fg: "#000000" },
-      "K":  { label: "P1 End Date",          bg: "#fcd5b4", fg: "#000000" },
-      "L":  { label: "P2 Start Date",   bg: "#fcd5b4", fg: "#000000" },
-      "M":  { label: "P2 End Date",           bg: "#fcd5b4", fg: "#000000" },
-      "N":  { label: "P3 Start Date",     bg: "#fcd5b4", fg: "#000000" },
-      "O":  { label: "P3 End Date",       bg: "#fcd5b4", fg: "#000000" },
-      "P":  { label: "Org Plan Date",       bg: "#fcd5b4", fg: "#000000" },
-      "Q":  { label: "Org End Date",        bg: "#fcd5b4", fg: "#000000" },
-      "R":  { label: "Ref. Lead Time",       bg: "#fcd5b4", fg: "#000000" },
-      "S":  { label: "Lead Time",       bg: "#fcd5b4", fg: "#000000" },
-      "T":  { label: "Intlk",         bg: "#fcd5b4", fg: "#000000" },
-      "U":  { label: "Effort Days",         bg: "#fcd5b4", fg: "#000000" },
-      "V":  { label: "Cur. Start Date",        bg: "#fcd5b4", fg: "#000000" },
-      "W":  { label: "Cur. End Date",     bg: "#fcd5b4", fg: "#000000" },
-      "X":  { label: "Act. Start Date",    bg: "#fcd5b4", fg: "#000000" },
-      "Y":  { label: "Act. End Date",      bg: "#fcd5b4", fg: "#000000" },
-      "Z":  { label: "% Complete",        bg: "#fcd5b4", fg: "#000000" },
-      "AA": { label: "Exptd % Completion",      bg: "#fcd5b4", fg: "#000000" },
-      "AB": { label: "Alert Date for 80%",        bg: "#fcd5b4", fg: "#000000" },
-      "AD": { label: "Help Req. from",     bg: "#fcd5b4", fg: "#000000" },
-      "AF": { label: "Remark",        bg: "#fcd5b4", fg: "#000000" },
-    };
-    var chDefs = isDark ? customHeaderDefs : customHeaderDefsLight;
+    // ── Custom header row — driven by schedule_config.js ─────
+    var chDefs = schedCfg ? (isDark ? schedCfg.customHeaders.dark : schedCfg.customHeaders.light) : {};
     var chRowBg    = isDark ? "#141414" : "#e8edf5";
     var chBorder   = isDark ? "#333333" : "#c0c7d8";
     var chFallbackBg = isDark ? "#1a1a2e" : "#e8edf5";
@@ -1720,7 +2046,7 @@ function renderExcelMirror(container, data) {
     html += '<tr style="height:26px;">';
     for (var chi = 0; chi < cols.length; chi++) {
       var chCol = cols[chi];
-      if (chCol === "AC" || chCol === "AE") continue;
+      if (isSkippedCol(chCol)) continue;
       if (isCollapsedCol(chCol)) continue;
       var chCw = getSheetColumnWidth(chCol);
       var chDef = chDefs[chCol] || {};
@@ -1773,12 +2099,6 @@ function renderExcelMirror(container, data) {
       // Skip Excel header rows 6, 7, 8 — replaced by custom header above
       if (r === 6 || r === 7 || r === 8) continue;
 
-        // ADD THIS DEBUG
-      if (r >= 9 && r <= 16) {
-          console.log("=== Processing Row", r, "===");
-          console.log("Columns for this row:", cols);
-      }
-
       var rh = rowHeights[String(r)] || 20;
       var isComplete = false;
       var zCoord = "Z" + r;
@@ -1795,16 +2115,10 @@ function renderExcelMirror(container, data) {
       html += '<tr style="height:' + rh + 'px;background:' + rowBg + '">';
 
       for (var ci3 = 0; ci3 < cols.length; ci3++) {
-         // ADD THIS DEBUG
-        if (col3 === "R" && r >= 9 && r <= 16) {
-            console.log("Found column R at row", r);
-        }
-
         var col3  = cols[ci3];
 
-        if (col3 === "AC" || col3 === "AE") continue;
+        if (isSkippedCol(col3)) continue;
 
-        if (col3 === "R") console.log("Column R found at row", r, "value:", cells[col3 + r] ? cells[col3 + r].v : "null");
         var coord = col3 + r;
         var info  = cells[coord];
 
@@ -1825,11 +2139,17 @@ function renderExcelMirror(container, data) {
           "white-space:nowrap",
         ];
         // ── EDITABILITY — computed once, used by both bg and input rendering ──
-        var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head");
-        var isADColumn = (col3 === "AD" && r >= 9);
+        var isReadOnly = state.user && (state.user.role === "admin" || state.user.role === "head" || (state.user.role && state.user.role.endsWith("_head")));
+        // isADColumn: only fires when dept has a helpDropdown with a designated col
+        var isADColumn = (AD_COL !== null && col3 === AD_COL && r >= TASK_START_ROW);
+        // A col marked "readonly" in editableCols is never editable regardless of server flag
+        var _editColCfgRow = schedCfg && schedCfg.editableCols ? schedCfg.editableCols[col3] : null;
+        var _isConfigReadonly = _editColCfgRow && _editColCfgRow.type === "readonly";
         var isEditable = false;
-        if (isADColumn) {
-            // AD editability: frontend rule — editable only when Z < 100%
+        if (_isConfigReadonly) {
+            isEditable = false;
+        } else if (isADColumn) {
+            // Help-dropdown editability: editable only when % complete < 100
             var _zInfoAD = cells["Z" + r];
             var _zValAD  = _zInfoAD ? String(_zInfoAD.v || "") : "";
             var _zDoneAD = (_zValAD === "100%" || _zValAD === "100");
@@ -1856,28 +2176,21 @@ function renderExcelMirror(container, data) {
         var customBg = getCustomBackgroundColor(col3, r);
         var bgColor  = null;
 
-        // --- AD COLUMN ---
+        // --- HELP DROPDOWN COLUMN (e.g. AD in SW) ---
         if (isADColumn) {
-            var _adInfo       = cells["AD" + r];
+            var _adInfo       = cells[AD_COL + r];
             var _adValue      = _adInfo ? String(_adInfo.v || "").trim() : "";
             var _adValueLower = _adValue.toLowerCase();
             var _adColor      = AD_COLORS[_adValueLower];
-            var AD_FG = isDark ? {
-                "engineering": "#f87171", "purchase": "#86efac",
-                "software": "#60a5fa", "project management": "#93c5fd",
-                "manufacturing": "#a3e635", "sales": "#2dd4bf", "client": "#d8b4fe"
-            } : {};
 
             if (_adColor) {
-                // Dept selected (editable or not): always show dept color
                 bgColor = _adColor;
-                tdStyle.push("color:" + (AD_FG[_adValueLower] || "#ffffff"));
+                // Dark mode: use per-dept fg from config; light mode: white
+                tdStyle.push("color:" + (isDark ? (AD_FG_DARK[_adValueLower] || "#ffffff") : "#ffffff"));
             } else if (isEditable) {
-                // Editable + no dept selected: blue to signal user can interact
                 bgColor = isDark ? "#1a3a5a" : "#b8d8ff";
                 tdStyle.push("color:" + (isDark ? "#88ccff" : "#0066cc"));
             } else {
-                // Not editable + no dept: row background
                 bgColor = rowBg;
             }
         }
@@ -1981,13 +2294,32 @@ function renderExcelMirror(container, data) {
     // Extract row number from coord (e.g. "X12" -> 12)
     var row = parseInt(coord.replace(/[A-Z]+/, ""), 10);
 
-    // Map col to task field
-    var fieldMap = { "X": "actual_start", "Y": "actual_end", "Z": "percent_complete", "AD": "help_required", "AF": "remark" };
+    // Build field map from editableCols config — maps col letter to task field name.
+    // Any col not in this map is silently ignored (won't produce a pending change).
+    // "readonly" cols are excluded — they can never produce a change.
+    var fieldMap = {};
+    if (schedCfg && schedCfg.editableCols) {
+      // Static known mappings — col → server field name
+      var _knownFields = {
+        "X":  "actual_start",
+        "Y":  "actual_end",
+        "Z":  "percent_complete",
+        "AF": "remark",
+      };
+      // Add help-dropdown col if present
+      if (AD_COL) _knownFields[AD_COL] = "help_required";
+
+      Object.keys(schedCfg.editableCols).forEach(function(c) {
+        var cfg = schedCfg.editableCols[c];
+        if (cfg.type !== "readonly" && _knownFields[c]) {
+          fieldMap[c] = _knownFields[c];
+        }
+      });
+    }
+
     var field = fieldMap[col];
     if (!field) return;
 
-    // Find existing pending change for this row or create one
-    // We key task changes by row number
     var taskKey = "__row_" + row;
     if (!state.pendingChanges[taskKey]) {
       state.pendingChanges[taskKey] = { _row: row };
@@ -2002,16 +2334,12 @@ function renderExcelMirror(container, data) {
 
   // Toggle handler
   window.__xlToggleGroup = function(gi) {
-    console.log("[XL] toggle clicked, gi=", gi, "current state=", collapseState[gi]);
     collapseState[gi] = !collapseState[gi];
-    console.log("[XL] new state=", collapseState[gi]);
     var c = document.getElementById(containerId);
-    console.log("[XL] container found?", !!c, "id=", containerId);
-    if (c) { container = c; buildTable(); console.log("[XL] buildTable done"); }
+    if (c) { container = c; buildTable(); }
   };
 
   buildTable();
-  console.log("[XL] initial buildTable done. colGroups=", colGroups.length, "containerId=", containerId);
 }
 
 function onXLPct(input) {
@@ -2162,9 +2490,11 @@ async function saveChanges() {
             refreshMonitorData();
     }
 
-    // Invalidate client cache so re-render fetches fresh data from server
-    if (state.project) delete state.sheetCache[state.project.id];
-    renderXLGrid();
+    // Force reload from updated JSON cache
+    if (state.project) {
+        delete state.sheetCache[state.project.id];
+        await loadSheetView();  // This reloads UI from the updated cache
+    }
   } catch(err) {
     toast(err.message || "Save failed", "error");
   } finally {
@@ -2173,83 +2503,6 @@ async function saveChanges() {
   }
 }
 
-// ── USERS ─────────────────────────────────────────────────────
-async function renderUsers() {
-  setNav("users");
-  setTopbar("User Management", false);
-  var page = document.getElementById("page-content");
-  page.innerHTML = '<div class="loading"><span class="spinner"></span> Loading users...</div>';
-
-  var users = [];
-  try { users = await API.getUsers(); }
-  catch(err) { page.innerHTML = '<div class="alert alert-error">' + h(err.message) + '</div>'; return; }
-
-  var ROLE_BADGE = {admin:"badge-red",head:"badge-purple",pm:"badge-blue",hw_tl:"badge-amber",sw_tl:"badge-green",mfg_tl:"badge-gray"};
-
-  var rows = users.map(function(u) {
-    var uJson = h(JSON.stringify(u));
-    return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;gap:14px;animation:fadeUp 0.3s ease">'
-      + '<div class="avatar avatar-md">' + h(u.name[0].toUpperCase()) + '</div>'
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-weight:600;font-size:14px;margin-bottom:2px">' + h(u.name) + '</div>'
-      + '<div style="font-size:11px;color:var(--text2);font-family:var(--font-mono)">@' + h(u.username) + ' &middot; ' + h(u.short_name) + '</div>'
-      + '</div>'
-      + '<span class="badge ' + (ROLE_BADGE[u.role]||"badge-gray") + '">' + roleLabel(u.role) + '</span>'
-      + '<div style="display:flex;gap:6px;flex-shrink:0">'
-      + '<button class="btn btn-ghost btn-sm" onclick=\'showUserModal(' + uJson + ')\'>Edit</button>'
-      + '<button class="btn btn-danger btn-sm" onclick="doDeleteUser(\'' + h(u.username) + '\',\'' + h(u.name) + '\')">Del</button>'
-      + '</div>'
-      + '</div>';
-  }).join("");
-
-  page.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">'
-    + '<div class="dash-title">Users <span style="color:var(--text3);font-size:14px;font-weight:400">(' + users.length + ')</span></div>'
-    + '<button class="btn btn-primary btn-sm" onclick="showUserModal()">+ New User</button>'
-    + '</div>'
-    + '<div style="display:flex;flex-direction:column;gap:8px">' + rows + '</div>';
-}
-
-function showUserModal(user) {
-  var isEdit = !!user;
-  var u = user || {};
-  var ROLES = ["admin","head","pm","hw_tl","sw_tl","mfg_tl"];
-  var existing = document.getElementById("user-modal-overlay");
-  if (existing) existing.remove();
-
-  var roleOptions = ROLES.map(function(r) {
-    return '<option value="' + r + '"' + (r===u.role?" selected":"") + '>' + roleLabel(r) + '</option>';
-  }).join("");
-
-  var overlay = document.createElement("div");
-  overlay.id = "user-modal-overlay";
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = '<div class="modal">'
-    + '<div class="modal-header">'
-    + '<div class="modal-title">' + (isEdit ? "Edit User" : "New User") + '</div>'
-    + '<button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'user-modal-overlay\').remove()">&times;</button>'
-    + '</div>'
-    + '<div class="modal-body">'
-    + '<div id="um-err" class="alert alert-error hidden"></div>'
-    + '<div class="form-group"><label class="form-label">Full Name</label>'
-    + '<input class="form-input" id="um-name" type="text" value="' + h(u.name||"") + '" placeholder="Full Name"></div>'
-    + '<div class="form-group"><label class="form-label">Short Name / Initials <span style="color:var(--text3)">(must match Excel)</span></label>'
-    + '<input class="form-input" id="um-short" type="text" value="' + h(u.short_name||"") + '" placeholder="KDM" style="text-transform:uppercase;font-family:var(--font-mono)"></div>'
-    + '<div class="form-group"><label class="form-label">Username</label>'
-    + '<input class="form-input" id="um-username" type="text" value="' + h(u.username||"") + '" placeholder="username"' + (isEdit?" readonly style='opacity:0.5'":"") + '></div>'
-    + '<div class="form-group"><label class="form-label">Password ' + (isEdit?"(blank = keep current)":"") + '</label>'
-    + '<input class="form-input" id="um-pass" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"></div>'
-    + '<div class="form-group"><label class="form-label">Role</label>'
-    + '<select class="form-select" id="um-role">' + roleOptions + '</select></div>'
-    + '</div>'
-    + '<div class="modal-footer">'
-    + '<button class="btn btn-secondary" onclick="document.getElementById(\'user-modal-overlay\').remove()">Cancel</button>'
-    + '<button class="btn btn-primary" id="um-save-btn" onclick="doSaveUser(\'' + h(u.username||"") + '\')">'
-    + (isEdit ? "Save Changes" : "Create User") + '</button>'
-    + '</div></div>';
-
-  overlay.addEventListener("click", function(e) { if (e.target === overlay) overlay.remove(); });
-  document.body.appendChild(overlay);
-}
 
 async function refreshFileStatusOnOpen() {
   try {
@@ -2286,49 +2539,6 @@ async function refreshFileStatusOnOpen() {
   }
 }
 
-async function doSaveUser(existingUsername) {
-  var isEdit = !!existingUsername;
-  var btn    = document.getElementById("um-save-btn");
-  var errEl  = document.getElementById("um-err");
-  var name     = document.getElementById("um-name").value.trim();
-  var short    = document.getElementById("um-short").value.trim().toUpperCase();
-  var username = isEdit ? existingUsername : document.getElementById("um-username").value.trim();
-  var password = document.getElementById("um-pass").value;
-  var role     = document.getElementById("um-role").value;
-  errEl.classList.add("hidden");
-  if (!name || !short || !username || (!isEdit && !password)) {
-    errEl.textContent = "Please fill all required fields";
-    errEl.classList.remove("hidden");
-    return;
-  }
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px"></span>';
-  try {
-    if (isEdit) {
-      var updates = {name:name, short_name:short, role:role};
-      if (password) updates.password = password;
-      await API.updateUser(existingUsername, updates);
-      toast("User updated \u2713");
-    } else {
-      await API.createUser({name:name, short_name:short, username:username, password:password, role:role});
-      toast("User created \u2713");
-    }
-    document.getElementById("user-modal-overlay").remove();
-    var nav = document.getElementById("nav-users");
-    if (nav && nav.classList.contains("active")) renderUsers();
-  } catch(err) {
-    errEl.textContent = err.message || "Failed";
-    errEl.classList.remove("hidden");
-    btn.disabled = false;
-    btn.textContent = isEdit ? "Save Changes" : "Create User";
-  }
-}
-
-async function doDeleteUser(username, name) {
-  if (!confirm('Delete "' + name + '"? This cannot be undone.')) return;
-  try { await API.deleteUser(username); toast("User deleted"); renderUsers(); }
-  catch(err) { toast(err.message, "error"); }
-}
 
 // ── Boot ───────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", init);
@@ -2375,7 +2585,7 @@ html += '<colgroup>';
 html += '<col style="width:36px;">';  // # column
 for (var ci0 = 0; ci0 < cols.length; ci0++) {
   var col0 = cols[ci0];  // ✅ ci0 matches
-  if (col0 === "AC" || col0 === "AE") continue;
+  if (isSkippedCol(col0)) continue;
   if (isCollapsedCol(col0)) continue;
   html += '<col style="width:' + getSheetColumnWidth(col0) + ';">';
 }

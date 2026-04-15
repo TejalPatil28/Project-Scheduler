@@ -6,18 +6,21 @@ from datetime import datetime, date
 from excel_db import (
     get_all_users,
     get_user_by_username,
+    get_all_monitor_projects,
     get_projects_for_user,
     get_project_by_id,
+    create_new_project_from_monitor,
     get_tasks,
     update_tasks_bulk,
     create_user,
     update_user,
     delete_user,
-    update_index_entry,
     get_master_projects,
     get_discipline_dirs,
     OWNER_MAP,
     update_monitor_cell,
+    ROLE_TO_DEPT,      
+    OWNER_MAP,
     update_monitor_timestamp,
     load_user_overdue_status,
 )
@@ -127,11 +130,11 @@ def get_project(project_id):
 
     # Access check — if project is in user's monitoring file they have access
     role = user["role"]
-    if role not in ("admin", "head"):
-        if "all_master_projects" not in _master_projects_cache:
-            from excel_db import get_all_monitor_projects
-            _master_projects_cache["all_master_projects"] = get_all_monitor_projects(role)
-        master_list = _master_projects_cache["all_master_projects"]
+    if role != "admin" and not role.endswith("_head"):
+        cache_key = f"all_master_projects_{role}"
+        if cache_key not in _master_projects_cache:
+            _master_projects_cache[cache_key] = get_all_monitor_projects(role)
+        master_list = _master_projects_cache[cache_key]
         allowed_ids = {m.get("file_id") for m in master_list}
         if project_id not in allowed_ids:
             return jsonify({"error": "Access denied"}), 403
@@ -191,11 +194,14 @@ def save_tasks(project_id):
     from excel_db import _read_sheet_cache, get_discipline_dirs
     _, _, sched_cache, _ = get_discipline_dirs(role)
     fresh = _read_sheet_cache(project_id, sched_cache)
+
+    sheet_cache_key = f"{role}:{project_id}" 
+
     if fresh:
-        _sheet_cache[project_id] = fresh
-    elif project_id in _sheet_cache:
+        _sheet_cache[sheet_cache_key] = fresh
+    elif sheet_cache_key in _sheet_cache:
         if now_str:
-            _sheet_cache[project_id]["last_modified"] = now_str
+            _sheet_cache[sheet_cache_key]["last_modified"] = now_str
 
     return jsonify({"message": msg, "last_modified": now_str})
 
@@ -203,14 +209,17 @@ def save_tasks(project_id):
 @login_required
 def get_sheet_data(project_id):
     """Return raw cell data for the Excel-mirror UI. Cached in memory."""
-    from excel_db import get_raw_sheet, PROJECTS_DIR
+    from excel_db import get_raw_sheet, get_discipline_dirs
     user = get_current_user()
     role = user["role"]
     is_readonly = role in ("admin", "head")
 
+    # NEW: role-aware in-memory key
+    sheet_cache_key = f"{role}:{project_id}"
+
     # Check in-memory cache first (fastest)
-    if project_id in _sheet_cache:
-        data = _sheet_cache[project_id]
+    if sheet_cache_key in _sheet_cache:
+        data = _sheet_cache[sheet_cache_key]
         if is_readonly:
             # Return a copy with editable flags stripped — don't mutate the cache
             import copy
@@ -219,15 +228,18 @@ def get_sheet_data(project_id):
                 cell.pop("editable", None)
         return jsonify(data)
 
-    fpath = os.path.join(PROJECTS_DIR, project_id + ".xlsx")
+    # CHANGED: capture sched_cache too
+    projects_dir, _, sched_cache, _ = get_discipline_dirs(role)
+    
+    fpath = os.path.join(projects_dir, project_id + ".xlsx")
     if not os.path.exists(fpath):
-        fpath_b = os.path.join(PROJECTS_DIR, project_id + ".xlsb")
+        fpath_b = os.path.join(projects_dir, project_id + ".xlsb")
         if os.path.exists(fpath_b):
             fpath = fpath_b
         else:
             return jsonify({"error": "Project file not found"}), 404
     try:
-        data = get_raw_sheet(fpath)
+        data = get_raw_sheet(fpath, role=role, sched_cache=sched_cache)
         # Inject last_modified from file mtime if get_raw_sheet didn't already
         if not data.get("last_modified"):
             from datetime import datetime as _dt
@@ -236,7 +248,7 @@ def get_sheet_data(project_id):
                 data["last_modified"] = _dt.fromtimestamp(ts).strftime("%d %b %Y, %I:%M %p")
             except Exception:
                 data["last_modified"] = None
-        _sheet_cache[project_id] = data  # store in memory
+        _sheet_cache[sheet_cache_key] = data  # store in memory
         if is_readonly:
             import copy
             data = copy.deepcopy(data)
@@ -246,43 +258,32 @@ def get_sheet_data(project_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/api/master/projects", methods=["GET"])
 @login_required
 def master_projects():
     user = get_current_user()
-    if "all_master_projects" not in _master_projects_cache:
+    role = user["role"]
+    cache_key = f"all_master_projects_{role}"   # <-- role-specific key
+    if cache_key not in _master_projects_cache:
         from excel_db import get_all_monitor_projects
-        _master_projects_cache["all_master_projects"] = get_all_monitor_projects(user["role"])
-    return jsonify(_master_projects_cache["all_master_projects"])
-
+        _master_projects_cache[cache_key] = get_all_monitor_projects(role)
+    return jsonify(_master_projects_cache[cache_key])
 
 @app.route("/api/monitor/sheet", methods=["GET"])
 @login_required
 def get_monitor_sheet():
     """Return the raw sheet data for the department monitoring file."""
-    from excel_db import get_monitor_sheet_data, PROJECTS_DIR, load_user_overdue_status
+    from excel_db import get_monitor_sheet_data, find_monitor_file, load_user_overdue_status
     import os
     
     user = get_current_user()
     role = user.get("role", "sw_tl")
     
     # Map role to department
-    role_to_dept = {
-        "sw_tl": "SW",
-        "hw_tl": "HW", 
-        "mfg_tl": "MFG",
-        "pm": "PM",
-        "admin": "SW",
-        "head": "SW"
-    }
+    department = ROLE_TO_DEPT.get(role, "SW")
     
-    department = role_to_dept.get(role, "SW")
-    
-    # Construct path to department monitoring file
-    monitor_filename = f"{department}_Monitor.xlsx"
-    dept_dir = os.path.dirname(PROJECTS_DIR)
-    fpath = os.path.join(dept_dir, monitor_filename)
+    # Use find_monitor_file instead
+    fpath = find_monitor_file(department)
     
     print(f"[Monitor] Looking for: {fpath}")
     
@@ -332,7 +333,9 @@ def save_monitor_timestamp(project_id):
 
     # Patch the in-memory master projects cache in-place so the sidebar
     # reflects the updated stale status immediately — no disk read needed.
-    cached = _master_projects_cache.get("all_master_projects", [])
+    # With:
+    cache_key = f"all_master_projects_{role}"
+    cached = _master_projects_cache.get(cache_key, [])
     for entry in cached:
         if entry.get("file_id") == project_id:
             entry["stale"] = False
@@ -395,7 +398,8 @@ def clear_monitor_cache():
     # Delete monitor cache for all departments
     departments = ["SW", "HW", "MFG", "PM"]
     for dept in departments:
-        monitor_cache_dir = os.path.join(DATA_DIR, dept, "cache", "monitoring")
+        from excel_db import get_cache_path
+        monitor_cache_dir = get_cache_path(dept, "Monitoring")
         if os.path.exists(monitor_cache_dir):
             for filename in os.listdir(monitor_cache_dir):
                 if filename.endswith(".json"):
@@ -408,8 +412,115 @@ def clear_monitor_cache():
     
     return jsonify({"message": "Monitor cache cleared successfully"})
 
+# __NEW PROJECT CREATION LOGIC__________________________________
+
+@app.route('/api/monitor/create-project', methods=['POST'])
+def create_project_from_monitor():
+    """Create new project from monitor UI (PM Head only)"""
+    user = get_current_user()
+    if not user or user.get('role') != 'pm_head':
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.json
+    or_number = data.get('or_number')
+    section = data.get('section')
+    ov_value = data.get('ov_value')
+    assign_to = data.get('assign_to')
+    
+    if not all([or_number, section, ov_value, assign_to]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    # Call excel_db function to create project
+    from excel_db import create_new_project_from_monitor
+    result = create_new_project_from_monitor(or_number, section, ov_value, assign_to, user)
+    
+    return jsonify(result)
+
+@app.route("/api/projects/<project_id>/setup", methods=["GET", "POST"])
+@login_required
+def project_setup(project_id):
+    """Get setup fields or save setup data for a new project"""
+    user = get_current_user()
+    
+    # Only PM or pm_head can access setup
+    if user["role"] not in ("pm", "pm_head"):
+        return jsonify({"error": "Access denied"}), 403
+    
+    from excel_db import get_setup_fields, write_project_setup_data, get_discipline_dirs, _read_sheet_cache
+    import os
+    
+    # Get department for this user
+    from excel_db import ROLE_TO_DEPT
+    dept = ROLE_TO_DEPT.get(user["role"], "PM")
+    
+    # Get the schedule cache path to check if JSON exists
+    _, _, sched_cache, _ = get_discipline_dirs(user["role"])
+    cache_path = os.path.join(sched_cache, project_id + "_sheet.json")
+    
+    # If GET request: return the setup form configuration
+    if request.method == "GET":
+        # If JSON cache already exists, project is already set up
+        if os.path.exists(cache_path):
+            return jsonify({
+                "already_setup": True,
+                "message": "Project already has a cache file"
+            })
+        
+        # Get the setup fields configuration
+        setup_fields = get_setup_fields(dept)
+        
+        # Get task names for rows that have S, U, or AD fields
+        from openpyxl import load_workbook
+        projects_dir, _, _, _ = get_discipline_dirs(user["role"])
+        file_path = os.path.join(projects_dir, project_id + ".xlsx")
+        
+        if not os.path.exists(file_path):
+            file_path = os.path.join(projects_dir, project_id + ".xlsb")
+        
+        task_names = {}
+        if os.path.exists(file_path):
+            wb = load_workbook(file_path, data_only=True)
+            ws = wb.active
+            # Read task names from column I for rows 9-55
+            for row in range(9, 56):
+                task_name = ws[f"I{row}"].value
+                if task_name:
+                    task_names[row] = str(task_name).strip()
+            wb.close()
+        
+        return jsonify({
+            "already_setup": False,
+            "fields": setup_fields,
+            "task_names": task_names,
+            "project_id": project_id
+        })
+    
+    # If POST request: save the setup data
+    if request.method == "POST":
+        form_data = request.get_json()
+        
+        if not form_data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Write data to Excel and generate cache
+        success, message, last_modified = write_project_setup_data(project_id, form_data, user["role"])
+        
+        if not success:
+            return jsonify({"error": message}), 500
+        
+        # Also update monitor timestamp
+        if last_modified:
+            from excel_db import update_monitor_timestamp
+            update_monitor_timestamp(project_id, last_modified, user["role"])
+        
+        return jsonify({
+            "success": True,
+            "message": message,
+            "last_modified": last_modified
+        })
+
 # ── User management (admin only) ──────────────────────────────
-VALID_ROLES = ["admin", "head", "pm", "hw_tl", "sw_tl", "mfg_tl"]
+VALID_ROLES = ["admin", "sw_head", "hw_head", "mfg_head", "pm_head", "pm", "hw_tl", "sw_tl", "mfg_tl"]
 
 @app.route("/api/users", methods=["GET"])
 @login_required
@@ -477,7 +588,7 @@ def remove_user(username):
 
 @app.route("/api/refresh-file-status", methods=["POST"])
 def refresh_file_status():
-    from excel_db import get_all_monitor_projects, PROJECTS_DIR
+    from excel_db import get_all_monitor_projects, find_schedule_folder, DEPT_CONFIG
     import os
     
     user = get_current_user()
@@ -487,27 +598,34 @@ def refresh_file_status():
     role = user.get("role", "sw_tl")
     projects = get_all_monitor_projects(role)
     
+    # Map role to department
+    
+    dept = ROLE_TO_DEPT.get(role, "SW")
+    projects_dir = find_schedule_folder(dept)
+    
+    # Get the correct prefix for this department
+    prefix = DEPT_CONFIG[dept]["sched_prefix"]
+    
     print("=== REFRESH DEBUG ===")
     
     for project in projects:
         project_id = project.get("project_id")
         if project_id:
-            normalized_id = "SWESch_" + project_id.replace("/", "_")
-            excel_path_xlsx = os.path.join(PROJECTS_DIR, normalized_id + ".xlsx")
-            excel_path_xlsb = os.path.join(PROJECTS_DIR, normalized_id + ".xlsb")
+            # Use department-specific prefix instead of hardcoded "SWESch_"
+            normalized_id = prefix + "_" + project_id.replace("/", "_")
+            excel_path_xlsx = os.path.join(projects_dir, normalized_id + ".xlsx")
+            excel_path_xlsb = os.path.join(projects_dir, normalized_id + ".xlsb")
             file_exists = os.path.exists(excel_path_xlsx) or os.path.exists(excel_path_xlsb)
             
-            # DEBUG: Print what we're checking
             print(f"Project ID: {project_id}")
             print(f"  Normalized: {normalized_id}")
             print(f"  Looking for: {excel_path_xlsx}")
             print(f"  Exists: {file_exists}")
-            print(f"  Actual files in dir: {os.listdir(PROJECTS_DIR)[:10]}")  # Show first 10 files
             
             project["file_exists"] = file_exists
     
     return jsonify({"projects": projects})
-    
+
 @app.route("/api/monitor/cell", methods=["POST"])
 @login_required
 def update_monitor_cell():
@@ -526,16 +644,7 @@ def update_monitor_cell():
     if not col or not row:
         return jsonify({"error": "Column and row required"}), 400
     
-    # Map role to department
-    role_to_dept = {
-        "sw_tl": "SW",
-        "hw_tl": "HW",
-        "mfg_tl": "MFG",
-        "pm": "PM",
-        "admin": "SW",
-        "head": "SW"
-    }
-    department = role_to_dept.get(role, "SW")
+    department = ROLE_TO_DEPT.get(role, "SW")
     
     # Update monitor cache and queue Excel write
     coord = f"{col}{row}"
