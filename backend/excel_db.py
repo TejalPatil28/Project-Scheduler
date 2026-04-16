@@ -293,13 +293,13 @@ PROJECT_SETUP_CELL_MAP = {
         
         # Actuals (Column C - shifted from B, blue cells)
         "panel_disp_act":   {"sheet": "PrjSch", "cell": "C44", "type": "number"},
-        "est_va_pct":       {"sheet": "PrjSch", "cell": "C45", "type": "number"},
+        "est_va_pct":       {"sheet": "PrjSch", "cell": "C45", "type": "percent"},
         "est_va":           {"sheet": "PrjSch", "cell": "C46", "type": "number"},
-        "est_sm_pct":       {"sheet": "PrjSch", "cell": "C47", "type": "number"},
+        "est_sm_pct":       {"sheet": "PrjSch", "cell": "C47", "type": "percent"},
         "est_sm":           {"sheet": "PrjSch", "cell": "C48", "type": "number"},
-        "act_va_pct":       {"sheet": "PrjSch", "cell": "C49", "type": "number"},
+        "act_va_pct":       {"sheet": "PrjSch", "cell": "C49", "type": "percent"},
         "act_va":           {"sheet": "PrjSch", "cell": "C50", "type": "number"},
-        "act_sm_pct":       {"sheet": "PrjSch", "cell": "C51", "type": "number"},
+        "act_sm_pct":       {"sheet": "PrjSch", "cell": "C51", "type": "percent"},
         "act_sm":           {"sheet": "PrjSch", "cell": "C52", "type": "number"},
         "reason_remark":    {"sheet": "PrjSch", "cell": "C53", "type": "text"},
         
@@ -403,34 +403,34 @@ PROJECT_SETUP_CELL_MAP = {
         "u54": {"sheet": "PrjSch", "cell": "U54", "row": 54, "task_row": 54, "type": "number"},
         
         # Column AD (Payment %) - specific rows only
-        "ad9":  {"sheet": "PrjSch", "cell": "AD9",  "row": 9,  "task_row": 9,  "type": "number"},
-        "ad10": {"sheet": "PrjSch", "cell": "AD10", "row": 10, "task_row": 10, "type": "number"},
-        "ad11": {"sheet": "PrjSch", "cell": "AD11", "row": 11, "task_row": 11, "type": "number"},
-        "ad12": {"sheet": "PrjSch", "cell": "AD12", "row": 12, "task_row": 12, "type": "number"},
-        "ad13": {"sheet": "PrjSch", "cell": "AD13", "row": 13, "task_row": 13, "type": "number"},
-        "ad14": {"sheet": "PrjSch", "cell": "AD14", "row": 14, "task_row": 14, "type": "number"},
-        "ad15": {"sheet": "PrjSch", "cell": "AD15", "row": 15, "task_row": 15, "type": "number"},
-        "ad16": {"sheet": "PrjSch", "cell": "AD16", "row": 16, "task_row": 16, "type": "number"},
-        "ad18": {"sheet": "PrjSch", "cell": "AD18", "row": 18, "task_row": 18, "type": "number"},
-        "ad19": {"sheet": "PrjSch", "cell": "AD19", "row": 19, "task_row": 19, "type": "number"},
-        "ad22": {"sheet": "PrjSch", "cell": "AD22", "row": 22, "task_row": 22, "type": "number"},
-        "ad24": {"sheet": "PrjSch", "cell": "AD24", "row": 24, "task_row": 24, "type": "number"},
-        "ad25": {"sheet": "PrjSch", "cell": "AD25", "row": 25, "task_row": 25, "type": "number"},
-        "ad31": {"sheet": "PrjSch", "cell": "AD31", "row": 31, "task_row": 31, "type": "number"},
-        "ad32": {"sheet": "PrjSch", "cell": "AD32", "row": 32, "task_row": 32, "type": "number"},
-        "ad33": {"sheet": "PrjSch", "cell": "AD33", "row": 33, "task_row": 33, "type": "number"},
-        "ad34": {"sheet": "PrjSch", "cell": "AD34", "row": 34, "task_row": 34, "type": "number"},
-        "ad35": {"sheet": "PrjSch", "cell": "AD35", "row": 35, "task_row": 35, "type": "number"},
-        "ad40": {"sheet": "PrjSch", "cell": "AD40", "row": 40, "task_row": 40, "type": "number"},
-        "ad43": {"sheet": "PrjSch", "cell": "AD43", "row": 43, "task_row": 43, "type": "number"},
-        "ad48": {"sheet": "PrjSch", "cell": "AD48", "row": 48, "task_row": 48, "type": "number"},
-        "ad49": {"sheet": "PrjSch", "cell": "AD49", "row": 49, "task_row": 49, "type": "number"},
-        "ad50": {"sheet": "PrjSch", "cell": "AD50", "row": 50, "task_row": 50, "type": "number"},
-        "ad51": {"sheet": "PrjSch", "cell": "AD51", "row": 51, "task_row": 51, "type": "number"},
-        "ad52": {"sheet": "PrjSch", "cell": "AD52", "row": 52, "task_row": 52, "type": "number"},
-        "ad53": {"sheet": "PrjSch", "cell": "AD53", "row": 53, "task_row": 53, "type": "number"},
-        "ad54": {"sheet": "PrjSch", "cell": "AD54", "row": 54, "task_row": 54, "type": "number"},
-        "ad55": {"sheet": "PrjSch", "cell": "AD55", "row": 55, "task_row": 55, "type": "number"},
+        "ad9":  {"sheet": "PrjSch", "cell": "AD9",  "row": 9,  "task_row": 9,  "type": "percent"},
+        "ad10": {"sheet": "PrjSch", "cell": "AD10", "row": 10, "task_row": 10, "type": "percent"},
+        "ad11": {"sheet": "PrjSch", "cell": "AD11", "row": 11, "task_row": 11, "type": "percent"},
+        "ad12": {"sheet": "PrjSch", "cell": "AD12", "row": 12, "task_row": 12, "type": "percent"},
+        "ad13": {"sheet": "PrjSch", "cell": "AD13", "row": 13, "task_row": 13, "type": "percent"},
+        "ad14": {"sheet": "PrjSch", "cell": "AD14", "row": 14, "task_row": 14, "type": "percent"},
+        "ad15": {"sheet": "PrjSch", "cell": "AD15", "row": 15, "task_row": 15, "type": "percent"},
+        "ad16": {"sheet": "PrjSch", "cell": "AD16", "row": 16, "task_row": 16, "type": "percent"},
+        "ad18": {"sheet": "PrjSch", "cell": "AD18", "row": 18, "task_row": 18, "type": "percent"},
+        "ad19": {"sheet": "PrjSch", "cell": "AD19", "row": 19, "task_row": 19, "type": "percent"},
+        "ad22": {"sheet": "PrjSch", "cell": "AD22", "row": 22, "task_row": 22, "type": "percent"},
+        "ad24": {"sheet": "PrjSch", "cell": "AD24", "row": 24, "task_row": 24, "type": "percent"},
+        "ad25": {"sheet": "PrjSch", "cell": "AD25", "row": 25, "task_row": 25, "type": "percent"},
+        "ad31": {"sheet": "PrjSch", "cell": "AD31", "row": 31, "task_row": 31, "type": "percent"},
+        "ad32": {"sheet": "PrjSch", "cell": "AD32", "row": 32, "task_row": 32, "type": "percent"},
+        "ad33": {"sheet": "PrjSch", "cell": "AD33", "row": 33, "task_row": 33, "type": "percent"},
+        "ad34": {"sheet": "PrjSch", "cell": "AD34", "row": 34, "task_row": 34, "type": "percent"},
+        "ad35": {"sheet": "PrjSch", "cell": "AD35", "row": 35, "task_row": 35, "type": "percent"},
+        "ad40": {"sheet": "PrjSch", "cell": "AD40", "row": 40, "task_row": 40, "type": "percent"},
+        "ad43": {"sheet": "PrjSch", "cell": "AD43", "row": 43, "task_row": 43, "type": "percent"},
+        "ad48": {"sheet": "PrjSch", "cell": "AD48", "row": 48, "task_row": 48, "type": "percent"},
+        "ad49": {"sheet": "PrjSch", "cell": "AD49", "row": 49, "task_row": 49, "type": "percent"},
+        "ad50": {"sheet": "PrjSch", "cell": "AD50", "row": 50, "task_row": 50, "type": "percent"},
+        "ad51": {"sheet": "PrjSch", "cell": "AD51", "row": 51, "task_row": 51, "type": "percent"},
+        "ad52": {"sheet": "PrjSch", "cell": "AD52", "row": 52, "task_row": 52, "type": "percent"},
+        "ad53": {"sheet": "PrjSch", "cell": "AD53", "row": 53, "task_row": 53, "type": "percent"},
+        "ad54": {"sheet": "PrjSch", "cell": "AD54", "row": 54, "task_row": 54, "type": "percent"},
+        "ad55": {"sheet": "PrjSch", "cell": "AD55", "row": 55, "task_row": 55, "type": "percent"},
     }
 }
 
@@ -3857,6 +3857,12 @@ def write_project_setup_data(project_id, form_data, role="pm_head"):
                 try:
                     cell_value = float(value)
                 except (ValueError, TypeError):
+                    cell_value = 0
+            elif field_type == "percent":
+                try:
+                    val = float(value)
+                    cell_value = val / 100 if val > 1 else val
+                except:
                     cell_value = 0
             elif field_type == "date":
                 if value:
